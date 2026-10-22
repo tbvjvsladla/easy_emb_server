@@ -108,7 +108,9 @@ python3 tools/embctl.py campaign run --campaign output/campaigns/<id> --timeout 
 
 생성 Dockerfile, 설정 YAML·실행 SH·환경 ENV, 이미지 참조, 승인·환경 스냅샷, 실패 로그와 측정값은 `output/<model>/attempts/<attempt>/`에 보존합니다. 필요한 빌드·런타임 패치와 실제 적용 이력도 해당 시도에 연결합니다. 캠페인은 이 원문 증거를 가리키며, 미해결 셀에는 이유와 재개 조건을 남깁니다.
 
-개발 환경에서는 `multilingual-e5-small`, `multilingual-e5-base`, `embeddinggemma-300m`의 기본 입력 길이·원래 출력 차원으로 CPU와 RTX 5090에서 총 6개 셀의 TEI E2E를 검증했습니다(2026-10-22). 실제 Codex 호출을 종료하고 새 호출로 이어가는 검증도 수행했습니다. 다른 모델·장치·환경은 현재 실행의 증거로 다시 판정합니다.
+개발 환경의 NAS 18종 × CPU/GPU, 총 36개 셀을 처리했습니다(2026-10-23). 모델 기본 입력 길이·원래 출력 차원을 유지한 텍스트 임베딩 E2E에서 17종 34개 셀이 CPU와 RTX 5090에서 PASS했습니다. `nomic-xlm-2048`은 마스킹 언어 모델이며 문장 임베딩 파이프라인의 근거가 없어 CPU/GPU 2개 셀을 BLOCKED로 기록했습니다. 전체 검증·미해결 보고 완료와 전 모델 PASS를 구분합니다.
+
+별도 연속성 검증에서는 실제 Codex 호출을 종료하고 새 호출로 이어가는 동작도 확인했습니다. 다른 모델·장치·환경은 현재 실행의 증거로 다시 판정합니다.
 
 ## 저장소에 포함되는 것
 
