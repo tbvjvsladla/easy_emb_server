@@ -60,7 +60,36 @@ def checked_loaded(loaded):
     model, evidence = loaded
     if evidence.get("missing_keys") or evidence.get("mismatched_keys") or evidence.get("error_msgs"):
         raise RuntimeError(f"Embedding adapter did not load all expected checkpoint weights: {evidence}")
-    return model, {"missing_keys": [], "mismatched_keys": [], "unexpected_keys": evidence.get("unexpected_keys", [])}
+    return model, {"missing_keys": [], "mismatched_keys": [], "unexpected_keys": sorted(evidence.get("unexpected_keys", []))}
+
+
+def kanana_llama_config(root="/model"):
+    from transformers import LlamaConfig
+    metadata = json.loads((Path(root) / "config.json").read_text())
+    if metadata.get("model_type") != "kanana2vec" or not metadata.get("head_dim"):
+        raise RuntimeError("Kanana needs its explicitly declared attention head dimension")
+
+    def validate_kanana_architecture(config):
+        # Kanana projects hidden1792 to 24*128 query channels. Full weight
+        # loading below checks that projection rather than assuming equality.
+        for value in (config.hidden_size, config.num_attention_heads, config.num_key_value_heads, config.head_dim):
+            if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+                raise ValueError("Kanana attention dimensions must be positive integers")
+        if config.num_attention_heads % config.num_key_value_heads:
+            raise ValueError("Kanana grouped-query heads must be divisible by key/value heads")
+
+    original = getattr(LlamaConfig, "__class_validators__", None)
+    if original is None:
+        return LlamaConfig.from_pretrained(root, local_files_only=True)
+    # This process loads one model before starting HTTP threads. Scope the
+    # compatibility exception to configuration parsing, restoring all validators
+    # before any model weights are loaded. Field and RoPE checks still run.
+    LlamaConfig.__class_validators__ = [validate_kanana_architecture if v.__name__ == "validate_architecture" else v
+                                        for v in original]
+    try:
+        return LlamaConfig.from_pretrained(root, local_files_only=True)
+    finally:
+        LlamaConfig.__class_validators__ = original
 
 
 def bounded_batches(lengths, token_budget, max_batch_size=32):
@@ -151,8 +180,8 @@ class KananaTextAdapter(NativeAdapter):
     def __init__(self, config):
         super().__init__(config)
         import torch
-        from transformers import AutoTokenizer, LlamaConfig, LlamaModel
-        native_config = LlamaConfig.from_pretrained("/model", local_files_only=True)
+        from transformers import AutoTokenizer, LlamaModel
+        native_config = kanana_llama_config()
         self.model, loading = checked_loaded(LlamaModel.from_pretrained(
             "/model", config=native_config, local_files_only=True,
             dtype=getattr(torch, config["dtype"]), attn_implementation="sdpa", output_loading_info=True))
@@ -163,6 +192,7 @@ class KananaTextAdapter(NativeAdapter):
         self.tokenizer.pad_token = self.tokenizer.eos_token
         self.adapter_info = {"name": "Kanana bidirectional Llama + mean pooling",
                              "loader": "transformers.LlamaModel; no local custom-code execution",
+                             "configuration_compatibility": "preserve explicit Kanana head_dim; scoped Llama divisibility validation adjustment",
                              "instruction": "empty (official encode default)", "causal_attention": False, "weight_loading": loading}
 
     def lengths(self, texts):
