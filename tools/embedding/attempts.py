@@ -379,12 +379,19 @@ def serve(path, port=8080, bind="127.0.0.1"):
 def capture(path):
     path = Path(path)
     containers = load(path / "containers.json")
+    observed = set()
     for role in ("api", "backend"):
         if containers.get(role):
             for verb, suffix in [("logs", "log"), ("inspect", "json")]:
                 p = subprocess.run(["docker", verb, containers[role]], capture_output=True, text=True)
+                if p.returncode:
+                    event(path, "capture_probe_failed", role=role, verb=verb, returncode=p.returncode,
+                          stdout=p.stdout, stderr=p.stderr)
+                    continue
                 (path / f"container-{role}.{suffix}").write_text(p.stdout + (p.stderr if suffix == "log" else ""))
-    collect_device_evidence(path)
+                observed.add((role, verb))
+    if {("backend", "logs"), ("backend", "inspect")} <= observed:
+        collect_device_evidence(path)
 
 
 def collect_device_evidence(path):
