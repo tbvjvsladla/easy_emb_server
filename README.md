@@ -72,6 +72,16 @@ curl http://127.0.0.1:18080/v1/embeddings \
 
 문자열 또는 문자열 배치를 받아 float 벡터를 반환합니다. `input_type`으로 모델의 query/document 프롬프트를 선택할 수 있고, 차원 축소는 모델이 지원하고 사용자가 승인한 범위에서 적용합니다. 입력 상한을 넘으면 거부하며, 기본값·실효 설정은 `/info`에서 확인합니다.
 
+PPLX context 모델에서 기본 API의 각 문자열은 독립 문서의 한 청크입니다. 한 문서의 여러 청크를 함께 처리하려면 `/v1/contextualizedembeddings`에 문서별 청크 배열을 보냅니다.
+
+```bash
+curl http://127.0.0.1:18080/v1/contextualizedembeddings \
+  -H 'Content-Type: application/json' \
+  -d '{"input":[["첫 번째 청크","이어지는 청크"],["별도 문서"]]}'
+```
+
+응답의 `document_index`와 `chunk_index`가 원문 위치를 가리킵니다. 입력 상한은 구분 토큰을 포함한 문서 전체에 적용하며, 예약 구분 문자열 `<|endoftext|>`는 청크 본문에서 거부합니다. 모델의 기본 양자화와 정규화 정책은 `/info`와 모델 설정에서 확인합니다.
+
 TEI는 백엔드 컨테이너와 정책 게이트웨이로, sentence-transformers는 독립 HTTP 컨테이너로 실행됩니다. 두 경로 모두 같은 승인 전략과 API 정책을 따릅니다.
 
 ## 여러 모델·설정을 오래 검증하기

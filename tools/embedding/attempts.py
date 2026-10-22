@@ -90,6 +90,12 @@ def choose_dtype(strategy, engine):
         # TEI 1.9 Candle Gemma3 rejects F16 on CUDA as well as CPU. Observed in
         # NAS E2E and confirmed in upstream backends/candle/src/lib.rs.
         return "float32"
+    if engine == "sentence-transformers" and strategy["profile"].get("model_type") == "bidirectional_pplx_qwen3":
+        local = load(Path(strategy["model_path"]) / "config.json")
+        if local.get("auto_map", {}).get("AutoModel") == "modeling.PPLXQwen3ContextualModel":
+            # Actual contextual CUDA FP16 output was non-finite; BF16 retains
+            # FP32's exponent range. Identify the pipeline independently of names.
+            return "bfloat16"
     if strategy["profile"].get("checkpoint_dtype") == "bfloat16":
         return "bfloat16" if engine == "sentence-transformers" else "float32"
     return "float16"
@@ -185,7 +191,7 @@ def render(strategy_path, output, engine=None, reason=None):
            "engine": chosen, "engine_reason": reason or ("TEI first; load/settings/runtime verification pending" if chosen == "tei" else "No matched upstream TEI artifact; same-device ST recipe"),
            "platform": adapter, "versions": versions, "state": "prepared",
            "dtype": dtype,
-           "dtype_reason": "TEI Gemma3 requires float32; CPU float32; bf16 checkpoint preserves bf16 on ST or uses TEI float32; other GPU paths start float16. Agent can adjust with runtime evidence.",
+           "dtype_reason": "TEI Gemma3 requires float32; CPU float32; ST PPLX contextual uses bf16 after observed CUDA fp16 non-finite vectors; bf16 checkpoint preserves bf16 on ST or uses TEI float32; other GPU paths start float16. Agent can adjust with runtime evidence.",
            "recovery_policy": "Agent diagnoses evidence, adjusts recipe/patch, records changes; no repeated identical retry or phase HITL.",
            "limits": {"build_timeout_seconds": 1800,
                       "startup_timeout_seconds": 1800 if s["context_window"] >= 16384 else 600,

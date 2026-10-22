@@ -56,6 +56,21 @@ def mask_signature_compatibility(original):
     return adapted
 
 
+def load_pplx_context(dtype, root="/model"):
+    review = reviewed_pplx_code(contextual=True, root=Path(root))
+    from transformers.dynamic_module_utils import get_class_from_dynamic_module
+    model_class = get_class_from_dynamic_module("modeling.PPLXQwen3ContextualModel", root, local_files_only=True)
+    # AutoConfig and AutoModel can cache the same local config file under
+    # distinct dynamic-module hashes. Preserve the model's concrete class
+    # identity instead of disabling its isinstance guard or editing NAS code.
+    native_config = model_class.config_class.from_pretrained(root, local_files_only=True)
+    native_config.name_or_path = str(root)
+    model, loading = checked_loaded(model_class.from_pretrained(
+        root, config=native_config, local_files_only=True, dtype=dtype,
+        attn_implementation="sdpa", output_loading_info=True))
+    return model, loading, review
+
+
 def checked_loaded(loaded):
     model, evidence = loaded
     if evidence.get("missing_keys") or evidence.get("mismatched_keys") or evidence.get("error_msgs"):
@@ -217,12 +232,8 @@ class KananaTextAdapter(NativeAdapter):
 class PPLXContextAdapter(NativeAdapter):
     def __init__(self, config):
         super().__init__(config)
-        review = reviewed_pplx_code(contextual=True)
         import torch
-        from transformers import AutoModel
-        self.model, loading = checked_loaded(AutoModel.from_pretrained(
-            "/model", trust_remote_code=True, local_files_only=True,
-            dtype=getattr(torch, config["dtype"]), attn_implementation="sdpa", output_loading_info=True))
+        self.model, loading, review = load_pplx_context(getattr(torch, config["dtype"]))
         self.model.to(config["torch_device"])
         import sys
         implementation = sys.modules[type(self.model).__module__]
@@ -232,6 +243,7 @@ class PPLXContextAdapter(NativeAdapter):
                              "flat_input": "each string is a separate one-chunk document",
                              "nested_endpoint": "/v1/contextualizedembeddings", "code_review": review,
                              "mask_api_compatibility": "adapt reviewed code to installed transformers mask signature",
+                             "configuration_identity": "offline model_class.config_class; retain upstream isinstance guard",
                              "weight_loading": loading,
                              "reserved_separator": self.tokenizer.sep_token,
                              "quantization": "official unnormalized int8, represented as JSON floats"}
