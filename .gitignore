@@ -1,0 +1,91 @@
+# 배포 대상: 운영 소스, 공통 설정, 규칙/스킬, 템플릿, README와 assets.
+# 실행 상태와 개인 자료는 로컬에 보존한다. 이미 추적된 파일/과거 이력에는 적용되지 않는다.
+
+# ── 실행 생성물 · HW 관측 · 로컬 근거 ──
+/output/
+/manifest.yaml
+/__llm-wiki/
+/facts/
+/docs/*/*
+!/docs/*/example.md
+
+# campaigns에는 규약과 템플릿만 배포한다. 실제 실행은 output/campaigns/에 저장한다.
+/campaigns/*
+!/campaigns/README.md
+!/campaigns/_template/
+
+# ── 에이전트 빌딩블럭 선별 배포 ──
+/.agents/*
+!/.agents/skills/
+/.codex/*
+!/.codex/config.toml
+!/.codex/rules/
+/.codex/rules/*
+!/.codex/rules/project.rules
+/.ouroboros/
+/.agent-local/
+/.claude/
+/.hermes-claude-control/
+.codegraph/
+.serena/
+.cursor/
+.windsurf/
+AGENTS.local.md
+CLAUDE.local.md
+
+# ── 인증정보 · 개인 환경 설정 ──
+.aws/
+.ssh/
+.env
+.env.*
+!.env.example
+!.env.*.example
+.netrc
+.pypirc
+*.pem
+*.key
+
+# ── 모델 가중치 · 모델 캐시 (배포물은 생성 도구) ──
+/models/
+/model/
+/tiktoken_cache/
+*.safetensors
+*.gguf
+*.onnx
+pytorch_model*.bin
+
+# ── Python / Node 의존성 · 빌드 · 테스트 실행 산출물 ──
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+node_modules/
+.cache/
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# ── 편집기 · OS · 임시 파일 ──
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*:Zone.Identifier
+*.swp
+*.swo
+*.tmp
+*.temp
+*.log
+/tmp/
+
+# ── 사용자 지정 로컬 임시 코드 (중첩 폴더에도 적용) ──
+temp/
+tests/

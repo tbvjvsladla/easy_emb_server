@@ -1,0 +1,49 @@
+# Project defaults for trusted Codex sessions. CLI/app/managed requirements may override.
+approval_policy = "on-request"
+default_permissions = "embedding-workspace"
+
+[features]
+network_proxy = true
+
+[permissions.embedding-workspace]
+description = "Embedding development: workspace writes, dependency sources, local API and Docker."
+extends = ":workspace"
+
+[permissions.embedding-workspace.network]
+enabled = true
+
+[permissions.embedding-workspace.network.domains]
+"localhost" = "allow"
+"127.0.0.1" = "allow"
+"::1" = "allow"
+"pypi.org" = "allow"
+"files.pythonhosted.org" = "allow"
+"download.pytorch.org" = "allow"
+"huggingface.co" = "allow"
+"*.huggingface.co" = "allow"
+"hf.co" = "allow"
+"*.hf.co" = "allow"
+"github.com" = "allow"
+"api.github.com" = "allow"
+"raw.githubusercontent.com" = "allow"
+"codeload.github.com" = "allow"
+"objects.githubusercontent.com" = "allow"
+"release-assets.githubusercontent.com" = "allow"
+"ghcr.io" = "allow"
+"pkg-containers.githubusercontent.com" = "allow"
+"registry-1.docker.io" = "allow"
+"auth.docker.io" = "allow"
+"production.cloudflare.docker.com" = "allow"
+"deb.debian.org" = "allow"
+"security.debian.org" = "allow"
+"archive.ubuntu.com" = "allow"
+"security.ubuntu.com" = "allow"
+"ports.ubuntu.com" = "allow"
+"developers.openai.com" = "allow"
+"learn.chatgpt.com" = "allow"
+"sbert.net" = "allow"
+"docs.pytorch.org" = "allow"
+
+[permissions.embedding-workspace.network.unix_sockets]
+"/var/run/docker.sock" = "allow"
+"/run/docker.sock" = "allow"

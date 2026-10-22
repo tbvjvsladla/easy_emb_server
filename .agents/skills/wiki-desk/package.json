@@ -1,0 +1,13 @@
+{
+  "name": "wiki-desk",
+  "version": "4.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Project knowledge desk (OKF 0.2 pointer library) - TypeScript, Node 24, zero runtime dependencies",
+  "scripts": {
+    "test": "python3 ../../../tools/verify.py --suite wiki"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

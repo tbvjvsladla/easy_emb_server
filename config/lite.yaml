@@ -1,0 +1,11 @@
+{
+  "schema": "embedding-lite/1",
+  "runner": "stdlib-http",
+  "selection_reason": "GuideLLM embeddings considered; this bounded routine also needs vector/order/device/input-policy checks. One dependency-free client handles both and preserves request accounting.",
+  "warmup_requests": 2,
+  "requests": 12,
+  "concurrency": 2,
+  "timeout_seconds": 120,
+  "inputs": ["임베딩 서빙 기능을 검증합니다.", "A different sentence checks batch order."],
+  "metrics": ["requests", "latency_seconds", "requests_per_second", "vectors_per_second", "container_memory", "gpu_memory"]
+}

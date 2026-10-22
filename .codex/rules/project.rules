@@ -1,0 +1,26 @@
+# Native Codex execution rules. Trusted project layer; load on a new session.
+# Serving HITL receipts remain mandatory in AGENTS.md and embctl.
+
+prefix_rule(
+    pattern = ["python3", "tools/verify.py"],
+    decision = "allow",
+    justification = "Project Python/wiki regression tests and fixed log capture.",
+    match = ["python3 tools/verify.py --suite python", "python3 tools/verify.py --suite wiki"],
+    not_match = ["python3 tools/other.py", "python3 -c \"print(1)\""],
+)
+
+prefix_rule(
+    pattern = ["python3", "tools/embctl.py", ["init", "inventory", "inspect", "render", "build", "serve", "bench", "capture", "report", "stop"]],
+    decision = "allow",
+    justification = "Approved embedding lifecycle; the helper validates serving strategy and resource ownership.",
+    match = ["python3 tools/embctl.py inspect --model /path/to/model", "python3 tools/embctl.py build --strategy output/model/strategies/approved.yaml"],
+    not_match = ["python3 tools/embctl.py approve --model /path/to/model", "python3 -c \"print(1)\""],
+)
+
+prefix_rule(
+    pattern = ["python3", "-m", "unittest", "discover", "-s", "tests", "-v"],
+    decision = "allow",
+    justification = "Previously approved project Python regression command.",
+    match = ["python3 -m unittest discover -s tests -v"],
+    not_match = ["python3 -m unittest discover -s other-tests -v"],
+)

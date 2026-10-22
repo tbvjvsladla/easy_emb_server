@@ -1,0 +1,15 @@
+{
+  "schema": "embedding-campaign/1",
+  "id": "example",
+  "goal": "Replace with the approved campaign goal.",
+  "runtime": {"bind": "127.0.0.1", "port": 8080, "routine": "config/lite.yaml"},
+  "cells": [
+    {
+      "id": "model-a-condition-1",
+      "model_path": "/path/to/model",
+      "comparison": {},
+      "strategy": null,
+      "build": {"recipes": {}}
+    }
+  ]
+}

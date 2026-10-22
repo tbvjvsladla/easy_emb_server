@@ -1,0 +1,208 @@
+{
+  "KURE-v1": {
+    "context_window": 8192,
+    "native_dimensions": 1024,
+    "normalize": true,
+    "source": "local README model table + ST modules"
+  },
+  "KoE5": {
+    "context_window": 512,
+    "native_dimensions": 1024,
+    "prompts": {
+      "query": "query: ",
+      "document": "passage: "
+    },
+    "normalize": true,
+    "source": "local README model table, FAQ prefixes + ST modules"
+  },
+  "multilingual-e5-small": {
+    "context_window": 512,
+    "native_dimensions": 384,
+    "prompts": {
+      "query": "query: ",
+      "document": "passage: "
+    },
+    "normalize": true,
+    "source": "local README usage + sentence_bert_config.json + ST modules"
+  },
+  "multilingual-e5-base": {
+    "context_window": 512,
+    "native_dimensions": 768,
+    "prompts": {
+      "query": "query: ",
+      "document": "passage: "
+    },
+    "normalize": true,
+    "source": "local README usage + sentence_bert_config.json + ST modules"
+  },
+  "multilingual-e5-large": {
+    "context_window": 512,
+    "native_dimensions": 1024,
+    "prompts": {
+      "query": "query: ",
+      "document": "passage: "
+    },
+    "normalize": true,
+    "source": "local README usage + sentence_bert_config.json + ST modules"
+  },
+  "Qwen3-Embedding-4B": {
+    "context_window": 32768,
+    "native_dimensions": 2560,
+    "reduction": {
+      "supported": true,
+      "min": 32,
+      "max": 2560
+    },
+    "normalize": true,
+    "source": "local README model table 32K and output 32..2560; ST modules/prompts"
+  },
+  "Qwen3-VL-Embedding-2B": {
+    "context_window": 32768,
+    "native_dimensions": 2048,
+    "reduction": {
+      "supported": true,
+      "min": 64,
+      "max": 2048
+    },
+    "normalize": true,
+    "requires_model_adapter": "Official Qwen3-VL text embedding processor/pooling; generic ST fallback is not yet verified.",
+    "source": "local README model table 32K and output 64..2048"
+  },
+  "embeddinggemma-2": {
+    "context_window": 8192,
+    "native_dimensions": 768,
+    "reduction": {
+      "supported": true,
+      "choices": [
+        768,
+        512,
+        256,
+        128
+      ]
+    },
+    "normalize": true,
+    "source": "local README Context Limits and Matryoshka Dimension Truncation; config positions are not trained input limit"
+  },
+  "embeddinggemma-300m": {
+    "context_window": 2048,
+    "native_dimensions": 768,
+    "reduction": {
+      "supported": true,
+      "choices": [
+        768,
+        512,
+        256,
+        128
+      ]
+    },
+    "normalize": true,
+    "source": "local README + sentence_bert_config.json + two Dense projections"
+  },
+  "kanana-nano-2.1b-embedding": {
+    "context_window": 512,
+    "native_dimensions": 1792,
+    "normalize": true,
+    "requires_model_adapter": "Local model AutoModel.encode(instruction,max_length), review custom code and adapter.",
+    "source": "local README usage max_length=512; config capacity8192 is separate"
+  },
+  "mdbr-leaf-ir": {
+    "context_window": 512,
+    "native_dimensions": 768,
+    "reduction": {
+      "supported": true,
+      "choices": [
+        768,
+        256
+      ]
+    },
+    "normalize": true,
+    "source": "local ST Dense out_features768; README truncate_dim256 example; other dimensions unconfirmed"
+  },
+  "nomic-embed-text-v1": {
+    "context_window": 8192,
+    "native_dimensions": 768,
+    "prompts": {
+      "query": "search_query: ",
+      "document": "search_document: "
+    },
+    "normalize": true,
+    "source": "local README usage and long context section"
+  },
+  "nomic-embed-text-v1.5": {
+    "context_window": 8192,
+    "native_dimensions": 768,
+    "reduction": {
+      "supported": true,
+      "choices": [
+        768,
+        512,
+        256,
+        128,
+        64
+      ]
+    },
+    "prompts": {
+      "query": "search_query: ",
+      "document": "search_document: "
+    },
+    "normalize": true,
+    "layer_norm_before_truncate": true,
+    "source": "local README Matryoshka layer_norm -> prefix truncate -> normalize"
+  },
+  "nomic-xlm-2048": {
+    "context_window": 2048,
+    "native_dimensions": 768,
+    "requires_model_adapter": "Masked-LM checkpoint, not an established sentence embedding pipeline; pooling semantics need evidence.",
+    "source": "local README pretrained RoPE masked-LM, 2048 tokens"
+  },
+  "pplx-embed-v1-0.6b": {
+    "context_window": 32768,
+    "native_dimensions": 1024,
+    "source": "local README model table 32K1024; quantizer module needs runtime verification",
+    "reduction": {
+      "supported": true,
+      "choices": [
+        1024
+      ],
+      "reason": "MRL declared by model card; exact reduced dimension candidates still need verification. Native is proposed for this campaign."
+    }
+  },
+  "pplx-embed-v1-4b": {
+    "context_window": 32768,
+    "native_dimensions": 2560,
+    "source": "local README model table 32K2560; quantizer module needs runtime verification",
+    "reduction": {
+      "supported": true,
+      "choices": [
+        2560
+      ],
+      "reason": "MRL declared by model card; exact reduced dimension candidates still need verification. Native is proposed for this campaign."
+    }
+  },
+  "pplx-embed-context-v1-0.6b": {
+    "context_window": 32768,
+    "native_dimensions": 1024,
+    "requires_model_adapter": "Context embedding chunk semantics require adapter; generic one-text-one-vector must not silently change them.",
+    "source": "local README model table and context chunk pooling",
+    "reduction": {
+      "supported": true,
+      "choices": [
+        1024
+      ],
+      "reason": "MRL declared by model card; exact reduced dimension candidates still need verification. Native is proposed for this campaign."
+    }
+  },
+  "pplx-embed-context-v1-4b": {
+    "context_window": 32768,
+    "native_dimensions": 2560,
+    "requires_model_adapter": "Context chunk semantics; local Pooling config1024 conflicts with model hidden2560, validate pipeline.",
+    "source": "local README model table2560 and config hidden_size; Pooling discrepancy retained",
+    "reduction": {
+      "supported": true,
+      "choices": [
+        2560
+      ],
+      "reason": "MRL declared by model card; exact reduced dimension candidates still need verification. Native is proposed for this campaign."
+    }
+  }
+}

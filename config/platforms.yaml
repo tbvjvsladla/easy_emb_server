@@ -1,0 +1,164 @@
+{
+  "schema": "embedding-platforms/1",
+  "source": "https://huggingface.co/docs/text-embeddings-inference/supported_models",
+  "checked_at": "2026-10-22",
+  "profiles": [
+    {
+      "id": "tei-cpu-x86",
+      "device": "cpu",
+      "architectures": [
+        "x86_64",
+        "AMD64"
+      ],
+      "tei_image": "ghcr.io/huggingface/text-embeddings-inference:cpu-1.9@sha256:2538ea1c9640d3763b15af668039d24172d063b42337b0c27796fc2be180c78d",
+      "st_base": "python:3.12-slim",
+      "torch_index": "https://download.pytorch.org/whl/cpu",
+      "torch_device": "cpu"
+    },
+    {
+      "id": "tei-cpu-arm64",
+      "device": "cpu",
+      "architectures": [
+        "aarch64",
+        "arm64"
+      ],
+      "tei_image": "ghcr.io/huggingface/text-embeddings-inference:cpu-arm64-1.9",
+      "st_base": "python:3.12-slim",
+      "torch_index": "https://download.pytorch.org/whl/cpu",
+      "torch_device": "cpu"
+    },
+    {
+      "id": "tei-cuda-120",
+      "device": "gpu",
+      "vendor": "nvidia",
+      "compute_capabilities": [
+        "12.0"
+      ],
+      "tei_image": "ghcr.io/huggingface/text-embeddings-inference:120-1.9@sha256:bd8e5b1954146f7fe8590b64b959bc194433c6c38c036592a84d736841ca9400",
+      "st_base": "python:3.12-slim",
+      "torch_index": "https://download.pytorch.org/whl/cu130",
+      "torch_device": "cuda",
+      "docker_args": [
+        "--gpus",
+        "all"
+      ],
+      "status": "upstream-experimental"
+    },
+    {
+      "id": "tei-cuda-121",
+      "device": "gpu",
+      "vendor": "nvidia",
+      "compute_capabilities": [
+        "12.1"
+      ],
+      "tei_image": "ghcr.io/huggingface/text-embeddings-inference:121-1.9",
+      "st_base": "python:3.12-slim",
+      "torch_index": "https://download.pytorch.org/whl/cu130",
+      "torch_device": "cuda",
+      "docker_args": [
+        "--gpus",
+        "all"
+      ]
+    },
+    {
+      "id": "tei-cuda-100",
+      "device": "gpu",
+      "vendor": "nvidia",
+      "compute_capabilities": [
+        "10.0"
+      ],
+      "tei_image": "ghcr.io/huggingface/text-embeddings-inference:100-1.9",
+      "st_base": "python:3.12-slim",
+      "torch_index": "https://download.pytorch.org/whl/cu130",
+      "torch_device": "cuda",
+      "docker_args": [
+        "--gpus",
+        "all"
+      ]
+    },
+    {
+      "id": "tei-cuda-90",
+      "device": "gpu",
+      "vendor": "nvidia",
+      "compute_capabilities": [
+        "9.0"
+      ],
+      "tei_image": "ghcr.io/huggingface/text-embeddings-inference:hopper-1.9",
+      "st_base": "python:3.12-slim",
+      "torch_index": "https://download.pytorch.org/whl/cu130",
+      "torch_device": "cuda",
+      "docker_args": [
+        "--gpus",
+        "all"
+      ]
+    },
+    {
+      "id": "tei-cuda-89",
+      "device": "gpu",
+      "vendor": "nvidia",
+      "compute_capabilities": [
+        "8.9"
+      ],
+      "tei_image": "ghcr.io/huggingface/text-embeddings-inference:89-1.9",
+      "st_base": "python:3.12-slim",
+      "torch_index": "https://download.pytorch.org/whl/cu130",
+      "torch_device": "cuda",
+      "docker_args": [
+        "--gpus",
+        "all"
+      ]
+    },
+    {
+      "id": "tei-cuda-86",
+      "device": "gpu",
+      "vendor": "nvidia",
+      "compute_capabilities": [
+        "8.6"
+      ],
+      "tei_image": "ghcr.io/huggingface/text-embeddings-inference:86-1.9",
+      "st_base": "python:3.12-slim",
+      "torch_index": "https://download.pytorch.org/whl/cu130",
+      "torch_device": "cuda",
+      "docker_args": [
+        "--gpus",
+        "all"
+      ]
+    },
+    {
+      "id": "tei-cuda-80",
+      "device": "gpu",
+      "vendor": "nvidia",
+      "compute_capabilities": [
+        "8.0"
+      ],
+      "tei_image": "ghcr.io/huggingface/text-embeddings-inference:1.9",
+      "st_base": "python:3.12-slim",
+      "torch_index": "https://download.pytorch.org/whl/cu130",
+      "torch_device": "cuda",
+      "docker_args": [
+        "--gpus",
+        "all"
+      ]
+    },
+    {
+      "id": "st-cuda-generic",
+      "device": "gpu",
+      "vendor": "nvidia",
+      "st_base": "python:3.12-slim",
+      "torch_index": "https://download.pytorch.org/whl/cu130",
+      "torch_device": "cuda",
+      "docker_args": [
+        "--gpus",
+        "all"
+      ],
+      "note": "TEI artifact not matched. Validate PyTorch wheel/device compatibility; adapt build if needed."
+    },
+    {
+      "id": "st-cpu-generic",
+      "device": "cpu",
+      "st_base": "python:3.12-slim",
+      "torch_device": "cpu",
+      "note": "Generic CPU recipe; wheel/base availability requires build verification."
+    }
+  ]
+}

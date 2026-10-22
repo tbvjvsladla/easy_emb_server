@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 620" width="1440" height="620" role="img" aria-labelledby="title desc">
+  <title id="title">easy-emb-server — 임베딩 서빙 흐름</title>
+  <desc id="desc">HW 관측, 모델 조사와 사람의 전략 승인, 컨테이너 빌드와 서빙, 경량 E2E 검증을 순서대로 수행한다. wiki-desk는 이전 근거를 연결하고, 캠페인과 셀 체크포인트는 승인과 시도별 증거를 다음 세션으로 넘긴다.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10Z" fill="#b44b2b"/></marker>
+    <marker id="navy" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10Z" fill="#274461"/></marker>
+  </defs>
+  <rect width="1440" height="620" rx="20" fill="#f2f1e8"/>
+  <g font-family="Noto Sans CJK KR, Noto Sans KR, Malgun Gothic, sans-serif" fill="#243344">
+    <text x="48" y="56" font-size="26" font-weight="700">easy-emb-server</text>
+    <text x="48" y="87" font-size="18">하나의 노드 · 임베딩 모델 · 현재 실행의 증거</text>
+    <rect x="570" y="30" width="822" height="69" rx="12" fill="#fbfaf5" stroke="#274461" stroke-width="1.5" stroke-dasharray="7 5"/>
+    <text x="981" y="60" text-anchor="middle" font-size="22" font-weight="600">wiki-desk · 이전 근거 조회 / 새 문서 입고</text>
+    <text x="981" y="85" text-anchor="middle" font-size="17">같은 모델·아키텍처·실패 이력을 읽고 다음 시도를 결정</text>
+    <path d="M200 158H1240" stroke="#274461" stroke-width="2" fill="none"/>
+    <path d="M981 99V158" stroke="#274461" stroke-width="2" fill="none"/>
+    <g stroke="#274461" stroke-width="2" fill="none" marker-end="url(#navy)"><path d="M200 158V202"/><path d="M547 158V202"/><path d="M894 158V202"/><path d="M1240 158V202"/></g>
+    <rect x="48" y="209" width="304" height="177" rx="15" fill="#fffefa" stroke="#b9c4c9" stroke-width="1.5"/>
+    <text x="72" y="245" font-size="18" fill="#956046">01 / terraforming-node</text>
+    <text x="72" y="283" font-size="24" font-weight="700">이 노드의 HW 관측</text>
+    <text x="72" y="319" font-size="18">CPU · 메모리 · 장치 · 런타임</text>
+    <text x="72" y="353" font-size="18" fill="#546577">관측 근거 → manifest.yaml</text>
+    <rect x="395" y="209" width="304" height="177" rx="15" fill="#fffefa" stroke="#b9c4c9" stroke-width="1.5"/>
+    <text x="419" y="245" font-size="18" fill="#956046">02 / embedding-explorer</text>
+    <text x="419" y="283" font-size="24" font-weight="700">모델 조사 · 전략 승인</text>
+    <text x="419" y="319" font-size="18">CPU/GPU → 입력 길이 → 차원</text>
+    <text x="419" y="353" font-size="18" fill="#546577">모델 기본값·지원 범위 제시</text>
+    <rect x="742" y="209" width="304" height="177" rx="15" fill="#fffefa" stroke="#b9c4c9" stroke-width="1.5"/>
+    <text x="766" y="245" font-size="18" fill="#956046">03 / upstream + explorer</text>
+    <text x="766" y="283" font-size="24" font-weight="700">컨테이너 빌드 · 서빙</text>
+    <text x="766" y="319" font-size="18">TEI 우선 · 같은 장치의 ST 폴백</text>
+    <text x="766" y="353" font-size="18" fill="#546577">실패 근거 → 조정 → 재시도</text>
+    <rect x="1089" y="209" width="303" height="177" rx="15" fill="#fffefa" stroke="#b9c4c9" stroke-width="1.5"/>
+    <text x="1113" y="245" font-size="18" fill="#956046">04 / embedding-lite-bench</text>
+    <text x="1113" y="283" font-size="24" font-weight="700">경량 E2E 검증</text>
+    <text x="1113" y="319" font-size="18">API 기능검사 + 유효 측정</text>
+    <text x="1113" y="353" font-size="18" fill="#546577">판정 · 실패 근거 · 재개 조건</text>
+    <g stroke="#b44b2b" stroke-width="3" fill="none" marker-end="url(#arrow)"><path d="M352 297H386"/><path d="M699 297H733"/><path d="M1046 297H1080"/></g>
+    <g stroke="#274461" stroke-width="1.5" fill="none" stroke-dasharray="5 4"><path d="M200 386V442"/><path d="M547 386V442"/><path d="M894 386V442"/><path d="M1240 386V442"/></g>
+    <rect x="48" y="442" width="1344" height="124" rx="14" fill="#e5eceb" stroke="#63887e" stroke-width="1.5"/>
+    <text x="76" y="477" font-size="23" font-weight="700">캠페인 · 셀 체크포인트</text>
+    <text x="76" y="510" font-size="18">목표 · 승인 · 현재 attempt · 실패/측정 증거 · 실행 소유권 · 다음 작업</text>
+    <text x="76" y="543" font-size="18" fill="#465c58">대화 compact / 호출 종료 → 다음 세션이 같은 상태를 읽고 이어서 실행</text>
+    <text x="1370" y="601" text-anchor="end" font-size="16" fill="#68747a">스켈레톤과 생성 도구는 Git에 · 실행 증거는 로컬 output/에</text>
+  </g>
+</svg>
