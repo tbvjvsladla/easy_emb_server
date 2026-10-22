@@ -67,6 +67,10 @@ python3 tools/embctl.py campaign answer --campaign output/campaigns/<id> --answe
 복구에는 직전 실패·확인할 가설·변경을 연결한다. 새 빌드 시도는 새 attempt이고, 살아 있는 명령을
 중복 실행하지 않는다. TEI 실패 뒤 같은 승인 장치의 ST로 전환할 때도 원문 실패 근거를 남긴다.
 
+사전 판정이나 자산 생성이 실패해 아직 attempt가 없어도 `checkpoint.recovery`와
+`workers/prepare-*.json`에 원인을 보존한다. 다음 호출은 같은 준비를 자동 반복하지 않는다.
+근거 있는 수정은 `retry`로 재개하고, 미해결은 증거와 재개 조건을 남겨 `resolve`한다.
+
 ```bash
 python3 tools/embctl.py campaign retry --campaign output/campaigns/<id> --cell <cell> --reason '<실패>' --hypothesis '<가설>' --change '<변경>'
 python3 tools/embctl.py campaign resolve --campaign output/campaigns/<id> --cell <cell> --outcome BLOCKED --reason '<문제>' --evidence /path/to/evidence --resume-condition '<재개 조건>'

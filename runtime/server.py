@@ -9,7 +9,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.request import Request, urlopen
 
-from .policy import InputError, check_lengths, inputs_from, project
+from .policy import InputError, check_lengths, input_options, inputs_from, project
 
 
 class TEIBackend:
@@ -24,7 +24,7 @@ class TEIBackend:
     def request(self, route, body=None):
         req = Request(self.url + route, data=json.dumps(body).encode() if body is not None else None,
                       headers={"Content-Type": "application/json"})
-        with urlopen(req, timeout=600) as response:
+        with urlopen(req, timeout=self.config.get("backend_timeout_seconds", 600)) as response:
             return json.load(response)
 
     def lengths(self, texts):
@@ -45,17 +45,24 @@ class STBackend:
     def __init__(self, config):
         import torch
         from sentence_transformers import SentenceTransformer
+        from .adapters import native_adapter, reviewed_pplx_code
         self.config = config
         self.lock = threading.Lock()
-        if config["profile"].get("requires_model_adapter") and not config["profile"].get("modules"):
-            raise RuntimeError(config["profile"]["requires_model_adapter"])
         device = config["torch_device"]
         if config["device"] == "gpu" and device == "cpu":
             raise RuntimeError("GPU strategy cannot run on CPU")
         if device.startswith("cuda") and not torch.cuda.is_available():
             raise RuntimeError("Selected GPU runtime is unavailable; CPU fallback is forbidden")
-        self.model = SentenceTransformer("/model", device=device, local_files_only=True, trust_remote_code=False,
-                                         model_kwargs={"torch_dtype": getattr(torch, config["dtype"])})
+        self.model = native_adapter(config)
+        if self.model is None:
+            if config["profile"].get("requires_model_adapter") and not config["profile"].get("modules"):
+                raise RuntimeError(config["profile"]["requires_model_adapter"])
+            custom = config["profile"].get("model_type") == "bidirectional_pplx_qwen3"
+            review = reviewed_pplx_code() if custom else None
+            self.model = SentenceTransformer("/model", device=device, local_files_only=True, trust_remote_code=custom,
+                                             model_kwargs={"torch_dtype": getattr(torch, config["dtype"])})
+            if review:
+                self.model.adapter_info = {"name": "Perplexity official ST + default int8 quantizer", "code_review": review}
         self.model.max_seq_length = config["context_window"]
         actual = self.model.get_sentence_embedding_dimension()
         if actual != config["native_dimensions"]:
@@ -72,6 +79,8 @@ class STBackend:
         self.model.eval()
 
     def lengths(self, texts):
+        if hasattr(self.model, "lengths"):
+            return self.model.lengths(texts)
         tokens = self.model.tokenizer(texts, truncation=False, padding=False, add_special_tokens=True)
         return [len(ids) for ids in tokens["input_ids"]]
 
@@ -81,11 +90,27 @@ class STBackend:
             return self.model.encode(texts, prompt="", normalize_embeddings=False, show_progress_bar=False,
                                      convert_to_numpy=True).tolist()
 
+    def contextual(self, documents):
+        if not hasattr(self.model, "encode_documents"):
+            raise InputError("This model does not provide contextual chunk embeddings")
+        if not isinstance(documents, list) or not documents or not all(
+                isinstance(doc, list) and doc and all(isinstance(text, str) and text.strip() for text in doc)
+                for doc in documents):
+            raise InputError("Context input must be nonempty documents containing nonempty text chunks")
+        lengths = self.model.document_lengths(documents)
+        check_lengths(lengths, self.config["context_window"])
+        with self.lock:
+            rows = self.model.encode_documents(documents)
+        if len(rows) != len(documents) or any(len(row) != len(doc) for row, doc in zip(rows, documents)):
+            raise ValueError("Contextual backend document/chunk count mismatch")
+        return [vector.tolist() for row in rows for vector in row], lengths
+
     def info(self):
         return {"engine": "sentence-transformers", "device": "cpu" if self.model.device.type == "cpu" else "gpu",
                 "device_observed": True, "model_device": self.device, "probe_device": self.probe_device,
                 "parameter_devices": self.parameter_devices, "max_seq_length": self.model.max_seq_length,
                 "dtype": str(next(self.model.parameters()).dtype),
+                "adapter": getattr(self.model, "adapter_info", None),
                 "versions": {p: importlib.metadata.version(p) for p in ("torch", "sentence-transformers", "transformers")}}
 
 
@@ -118,13 +143,26 @@ def handler(config, backend):
                 return self.respond(503, {"error": str(exc)})
 
         def do_POST(self):
-            if self.path not in {"/v1/embeddings", "/tokenize"}:
+            if self.path not in {"/v1/embeddings", "/v1/contextualizedembeddings", "/tokenize"}:
                 return self.respond(404, {"error": "not found"})
             try:
                 length = int(self.headers.get("Content-Length", "0"))
                 if not 0 < length <= 10_000_000:
                     raise InputError("Request body must be 1..10000000 bytes")
                 body = json.loads(self.rfile.read(length))
+                if not isinstance(body, dict):
+                    raise InputError("Request body must be a JSON object")
+                if self.path == "/v1/contextualizedembeddings":
+                    input_options(body, config)
+                    if not hasattr(backend, "contextual"):
+                        raise InputError("This engine does not expose contextual chunk embeddings")
+                    raw, lengths = backend.contextual(body.get("input"))
+                    vectors = project(raw, config)
+                    indices = [(doc, chunk) for doc, chunks in enumerate(body["input"]) for chunk in range(len(chunks))]
+                    return self.respond(200, {"object": "list", "model": config["model"], "data": [
+                        {"object": "embedding", "index": i, "document_index": doc, "chunk_index": chunk, "embedding": v}
+                        for i, ((doc, chunk), v) in enumerate(zip(indices, vectors))],
+                        "usage": {"prompt_tokens": sum(lengths), "total_tokens": sum(lengths)}})
                 texts = inputs_from(body, config)
                 lengths = backend.lengths(texts)
                 if self.path == "/tokenize":

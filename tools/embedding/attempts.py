@@ -95,21 +95,43 @@ def choose_dtype(strategy, engine):
     return "float16"
 
 
-def compatibility(s, manifest, adapter, versions, engine, dtype, runtime_root=None, recipes=None):
+def container_budget(manifest):
+    """Leave host headroom during full-context inference, using observed values."""
+    host = manifest.get("host", {})
+    memory = host.get("memory", {}).get("value", {})
+    total, available = memory.get("MemTotal"), memory.get("MemAvailable")
+    args, evidence = [], {"source": "manifest host memory and CPU observations"}
+    if isinstance(total, int) and isinstance(available, int) and min(total, available) > 0:
+        limit = int(min(total * .60, available * .75))
+        args += ["--memory", str(limit), "--memory-swap", str(limit)]
+        evidence.update(memory_bytes=limit, swap_disabled=True,
+                        rationale="At most 60% of total RAM and 75% of observed available RAM; preserve host headroom.")
+    cores = host.get("cpu", {}).get("value", {}).get("logical_cores")
+    if isinstance(cores, int) and cores > 0:
+        cpus = max(1, cores * .75)
+        args += ["--cpus", str(cpus)]
+        evidence["cpus"] = cpus
+    return args, evidence
+
+
+def compatibility(s, manifest, adapter, versions, engine, dtype, runtime_root=None, recipes=None, model_overrides=None):
     profile = {k: v for k, v in s["profile"].items() if k != "inspected_at"}
-    return digest({"model": s["model_fingerprint"], "device": s["device"], "context": s["context_window"], "dimensions": s["dimensions"],
+    data = {"model": s["model_fingerprint"], "device": s["device"], "context": s["context_window"], "dimensions": s["dimensions"],
                    "profile": profile, "engine": engine, "dtype": dtype, "architecture": manifest["host"]["architecture"],
                    "os": manifest["host"]["os"], "accelerator": adapter.get("accelerator"),
                    "adapter": adapter, "versions": versions,
                    "runtime_source": {p.name: digest(p.read_text()) for p in sorted((runtime_root or ROOT / "runtime").glob("*.py"))},
-                   "recipes": recipes})
+                   "recipes": recipes}
+    if model_overrides:
+        data["model_config_overrides"] = model_overrides
+    return digest(data)
 
 
 def refresh_compatibility(path, cfg):
     path = Path(path)
     cfg["compatibility_key"] = compatibility(load(path / "strategy.yaml"), load(path / "manifest.yaml"),
         cfg["platform"], cfg["versions"], cfg["engine"], cfg["dtype"], path / "runtime",
-        {p.name: p.read_text() for p in sorted(path.glob("Dockerfile*"))})
+        {p.name: p.read_text() for p in sorted(path.glob("Dockerfile*"))}, cfg.get("model_config_overrides"))
     cfg["previous_compatible_pass"] = find_compatible_pass(path.parents[2], cfg["compatibility_key"])
     save(path / "settings.yaml", cfg)
 
@@ -128,6 +150,9 @@ def find_compatible_pass(output, key):
 
 def render(strategy_path, output, engine=None, reason=None):
     s, manifest = checked_strategy(strategy_path)
+    profile = s["profile"]
+    if profile.get("requires_model_adapter") and not profile.get("modules") and profile.get("model_type") not in {"qwen3_vl", "kanana2vec"}:
+        raise ValueError(profile["requires_model_adapter"])
     adapter = select_platform(manifest, s["device"], load(ROOT / "config/platforms.yaml")["profiles"])
     if adapter.get("status") == "adapter_required":
         raise ValueError(adapter["reason"])
@@ -136,6 +161,15 @@ def render(strategy_path, output, engine=None, reason=None):
         raise ValueError("No sourced TEI recipe for this manifest; adapt platform or use ST on same device.")
     if engine == "sentence-transformers" and adapter.get("tei_image") and not reason:
         raise ValueError("Record TEI incompatibility/failure evidence with --reason before ST fallback.")
+    tei_modules = {"sentence_transformers.models." + name for name in ("Transformer", "Pooling", "Dense", "Normalize")}
+    unsupported = [m.get("type") for m in profile.get("modules", []) if m.get("type") not in tei_modules]
+    if chosen == "tei" and unsupported:
+        issue = "TEI cannot preserve declared custom ST modules: " + ", ".join(map(str, unsupported))
+        if engine == "tei":
+            raise ValueError(issue + "; use same-device ST with recorded incompatibility evidence.")
+        chosen, reason = "sentence-transformers", issue + "; select same-device ST instead of silently omitting model processing."
+    budget_args, budget = container_budget(manifest)
+    adapter = {**adapter, "docker_args": [*adapter.get("docker_args", []), *budget_args]}
     versions = load(ROOT / "config/versions.yaml")
     dtype = choose_dtype(s, chosen)
     key = compatibility(s, manifest, adapter, versions, chosen, dtype)
@@ -153,13 +187,33 @@ def render(strategy_path, output, engine=None, reason=None):
            "dtype": dtype,
            "dtype_reason": "TEI Gemma3 requires float32; CPU float32; bf16 checkpoint preserves bf16 on ST or uses TEI float32; other GPU paths start float16. Agent can adjust with runtime evidence.",
            "recovery_policy": "Agent diagnoses evidence, adjusts recipe/patch, records changes; no repeated identical retry or phase HITL.",
-           "limits": {"build_timeout_seconds": 1800, "startup_timeout_seconds": 600,
+           "limits": {"build_timeout_seconds": 1800,
+                      "startup_timeout_seconds": 1800 if s["context_window"] >= 16384 else 600,
+                      "functional_timeout_seconds": 1800 if s["context_window"] >= 16384 else 600,
+                      "container": budget,
                       "source": "Initial agent execution limits for this small recipe; revise with evidence, not serving HITL."}}
+    if chosen == "tei" and s["profile"].get("model_type") == "nomic_bert":
+        local_config = load(Path(s["model_path"]) / "config.json")
+        positions = local_config.get("n_positions")
+        if not local_config.get("max_position_embeddings") and isinstance(positions, int) and positions >= s["context_window"]:
+            cfg["model_config_overrides"] = {"max_position_embeddings": positions}
+            cfg["model_config_override_reason"] = "TEI router needs the standard alias for observed Nomic n_positions; preserve max_trained_positions separately and keep the same approved input limit."
+    if chosen == "tei" and s["profile"].get("model_type") == "qwen3":
+        capacity = load(Path(s["model_path"]) / "config.json").get("max_position_embeddings")
+        if isinstance(capacity, int) and capacity > s["context_window"]:
+            cfg["model_config_overrides"] = {"max_position_embeddings": s["context_window"]}
+            cfg["model_config_override_reason"] = "Align TEI router capacity with the approved model-card context; preserve weights and all RoPE parameters."
     save(path / "settings.yaml", cfg)
+    wheel = versions.get("torch_wheels", {}).get(
+        f"{adapter['torch_device']}:{manifest['host']['architecture']['value']}:cp312", {}) if adapter.get("st_base", "").startswith("python:3.12") else {}
+    torch_package = shlex.quote(wheel["url"] + "#sha256=" + wheel["sha256"]) if wheel else "torch==" + versions["torch"]
     backend_dockerfile = f"FROM {adapter['tei_image']}\n" if chosen == "tei" else (
         f"FROM {adapter['st_base']}\nWORKDIR /app\n"
-        f"RUN pip install --no-cache-dir torch=={versions['torch']}" + (f" --index-url {adapter['torch_index']}" if adapter.get("torch_index") else "") + "\n"
+        f"RUN pip install --no-cache-dir --timeout 120 --retries 5 {torch_package}" + (f" --index-url {adapter['torch_index']}" if adapter.get("torch_index") else "") + "\n"
         f"RUN pip install --no-cache-dir sentence-transformers=={versions['sentence_transformers']} transformers=={versions['transformers']}\n"
+        + (f"RUN pip install --no-cache-dir pillow=={versions['pillow']}\n" if versions.get("pillow") else "") +
+        (f"RUN pip install --no-cache-dir --timeout 120 torchvision=={versions['torchvision']}" +
+         (f" --index-url {adapter['torch_index']}" if adapter.get("torch_index") else "") + "\n" if versions.get("torchvision") else "") +
         "COPY runtime /app/runtime\nENTRYPOINT [\"python\",\"-m\",\"runtime.server\"]\n")
     (path / "Dockerfile").write_text(backend_dockerfile)
     if chosen == "tei":
@@ -227,7 +281,19 @@ def serve(path, port=8080, bind="127.0.0.1"):
     name = "easy-emb-" + digest(str(path))[:12]
     network = name + "-net"
     runtime = {**s, "engine": cfg["engine"], "attempt_id": cfg["id"], "torch_device": cfg["platform"]["torch_device"], "dtype": cfg["dtype"]}
+    runtime["backend_timeout_seconds"] = cfg["limits"].get("functional_timeout_seconds", 600)
     save(path / "runtime.json", runtime)
+    model_id = "/model"
+    if cfg["engine"] == "tei" and cfg.get("model_config_overrides"):
+        overlay = path / "model-overlay"
+        overlay.mkdir(exist_ok=True)
+        for item in Path(s["model_path"]).iterdir():
+            if item.name != "config.json" and not (overlay / item.name).is_symlink():
+                (overlay / item.name).symlink_to("/model/" + item.name, target_is_directory=item.is_dir())
+        save(overlay / "config.json", {**load(Path(s["model_path"]) / "config.json"), **cfg["model_config_overrides"]})
+        save(path / "model-config-patch.json", {"source": s["model_path"], "changes": cfg["model_config_overrides"],
+                                              "reason": cfg.get("model_config_override_reason")})
+        model_id = "/run/embedding/model-overlay"
     mount = ["--mount", f"type=bind,src={s['model_path']},dst=/model,readonly", "--mount", f"type=bind,src={path},dst=/run/embedding,readonly"]
     owner = ["--label", f"easy-emb.attempt={cfg['id']}", "--label", f"easy-emb.strategy={s['id']}"]
     # Reconcile actual state. Never remove somebody else's container or overwrite a name.
@@ -261,7 +327,7 @@ def serve(path, port=8080, bind="127.0.0.1"):
                     raise ValueError("Network name collision; refusing to join an unowned network.")
                 backend_name = name + "-backend"
                 args = ["docker", "run", "-d", "--name", backend_name, *owner, "--network", network, *mount,
-                        *cfg["platform"].get("docker_args", []), images["backend"]["id"], "--model-id", "/model", "--port", "80",
+                        *cfg["platform"].get("docker_args", []), images["backend"]["id"], "--model-id", model_id, "--port", "80",
                         "--dtype", cfg["dtype"], "--auto-truncate", "false",
                         "--max-batch-tokens", str(max(16384, s["context_window"])), "--json-output"]
                 execute(path, "start-backend", args, 60)

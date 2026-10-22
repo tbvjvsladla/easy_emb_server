@@ -53,9 +53,9 @@ def validate_routine(r):
 
 
 def functional(url, strategy, attempt, routine):
-    timeout = routine["timeout_seconds"]
-    info = request(url, "/info", timeout=timeout)
     cfg = load(Path(attempt) / "settings.yaml")
+    timeout = max(routine["timeout_seconds"], cfg.get("limits", {}).get("functional_timeout_seconds", 0))
+    info = request(url, "/info", timeout=timeout)
     for key, expected in (("strategy_id", strategy["id"]), ("attempt_id", cfg["id"]),
                           ("context_window", strategy["context_window"]), ("dimensions", strategy["dimensions"]),
                           ("input_policy", "reject_over_limit")):
@@ -88,6 +88,37 @@ def functional(url, strategy, attempt, routine):
         distances = [sum((x-y)**2 for x, y in zip(v, single)) for single in singles]
         if any(distances[i] >= d for j, d in enumerate(distances) if i != j):
             raise ValueError("Batch order could not be confirmed against single requests")
+    contextual = bool((info["backend"].get("adapter") or {}).get("contextual"))
+    contextual_limit_rejected = False
+    if contextual:
+        expected_indices = [(0, 0), (0, 1), (1, 0)]
+        try:
+            response = request(url, "/v1/contextualizedembeddings",
+                               {"input": [[texts[0], texts[1]], [texts[0]]]}, timeout)
+        except HTTPError as exc:
+            error = exc.read().decode("utf-8", errors="replace")
+            if exc.code != 400 or "Input exceeds approved context_window=" not in error:
+                raise
+            # Individually valid inputs may exceed the approved document budget
+            # when joined. Verify that rejection, then probe separate documents.
+            contextual_limit_rejected = True
+            expected_indices = [(i, 0) for i in range(len(texts))]
+            response = request(url, "/v1/contextualizedembeddings",
+                               {"input": [[text] for text in texts]}, timeout)
+        vectors(response, len(expected_indices), strategy["dimensions"])
+        if [(r.get("document_index"), r.get("chunk_index")) for r in response["data"]] != expected_indices:
+            raise ValueError("Contextual chunk/document mapping mismatch")
+        separator = info["backend"]["adapter"].get("reserved_separator")
+        if separator:
+            for route, value in [("/v1/embeddings", "a" + separator + "b"),
+                                 ("/v1/contextualizedembeddings", [["a" + separator + "b"]])]:
+                try:
+                    request(url, route, {"input": value}, timeout)
+                except HTTPError as exc:
+                    if exc.code != 400:
+                        raise ValueError("Reserved contextual separator rejection is not a client error") from exc
+                else:
+                    raise ValueError("Contextual encoder accepted an ambiguous embedded chunk separator")
     invalid = ["", [], [""], [1], 123, None]
     for value in invalid:
         try:
@@ -118,8 +149,10 @@ def functional(url, strategy, attempt, routine):
             raise ValueError("Over-limit input did not follow declared reject policy") from exc
     else:
         raise ValueError("Over-limit input was silently accepted/truncated")
-    return {"passed": True, "runtime": info, "device_evidence": evidence,
-            "checks": ["count", "order_vs_same_runtime_singles", "dimension", "finite", "device", "input_policy", "invalid_input"],
+    return {"passed": True, "runtime": info, "device_evidence": evidence, "timeout_seconds": timeout,
+            "checks": ["count", "order_vs_same_runtime_singles", "dimension", "finite", "device", "input_policy", "invalid_input"]
+                      + (["contextual_document_chunk_mapping"] if contextual else [])
+                      + (["contextual_document_limit_rejection"] if contextual_limit_rejected else []),
             "boundary_tokens": {"accepted": near, "rejected": over}}
 
 

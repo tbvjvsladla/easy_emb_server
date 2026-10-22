@@ -343,18 +343,30 @@ def attach_strategy(base, cid, receipt):
 def prepare(base, state, cid, engine=None, reason=None):
     cell, spec = state["cells"][cid], definition(state, cid)
     check_strategy(spec, cell["strategy"])
-    path = attempts.render(cell["strategy"], state["model_output"], engine, reason)
-    for filename, snapshot in spec["build"].get("recipes", {}).items():
-        if filename == "Dockerfile.gateway" and load(path / "settings.yaml")["engine"] != "tei":
-            raise ValueError("A gateway recipe comparison requires a TEI attempt; ST has no gateway build.")
-        if digest(snapshot["content"]) != snapshot["digest"]:
-            raise ValueError("Recipe snapshot was altered.")
-        (path / filename).write_text(snapshot["content"])
-    attempts.refresh_compatibility(path, load(path / "settings.yaml"))
+    path = None
+    try:
+        path = attempts.render(cell["strategy"], state["model_output"], engine, reason)
+        for filename, snapshot in spec["build"].get("recipes", {}).items():
+            if filename == "Dockerfile.gateway" and load(path / "settings.yaml")["engine"] != "tei":
+                raise ValueError("A gateway recipe comparison requires a TEI attempt; ST has no gateway build.")
+            if digest(snapshot["content"]) != snapshot["digest"]:
+                raise ValueError("Recipe snapshot was altered.")
+            (path / filename).write_text(snapshot["content"])
+        attempts.refresh_compatibility(path, load(path / "settings.yaml"))
+    except Exception as exc:
+        error = {"type": type(exc).__name__, "message": str(exc)}
+        evidence = base / "workers" / ("prepare-" + uuid.uuid4().hex + ".json")
+        save(evidence, {"cell_id": cid, "phase": "prepare", "at": now(), "error": error,
+                        "strategy": cell["strategy"], "partial_attempt": str(path) if path else None})
+        cell["evidence"].append(str(evidence))
+        cell["recovery"] = {"phase": "prepare", "error": error, "evidence": str(evidence)}
+        commit(base, state, "preparation_failed", cell_id=cid, error=error, evidence=str(evidence))
+        return False
     cell["attempt"] = str(path)
     cell["attempts"].append({"path": str(path), "attempt_id": load(path / "settings.yaml")["id"], "created_at": now(), "reason": reason})
     cell.update(phase="build", outcome="running", recovery=None)
     commit(base, state, "attempt_prepared", cell_id=cid, attempt=str(path), reason=reason)
+    return True
 
 
 def step(base):
@@ -402,7 +414,8 @@ def step(base):
             if cell["recovery"]:
                 return summary(base, state)
             if cell["phase"] == "prepare":
-                prepare(base, state, cid)
+                if not prepare(base, state, cid):
+                    return summary(base, state)
             operation_id = uuid.uuid4().hex
             invocation_id = uuid.uuid4().hex
             state["active"] = {"operation_id": operation_id, "invocation_id": invocation_id, "cell_id": cid,
@@ -437,7 +450,7 @@ def valid_result(cell):
             return False
         requests = load(routine.parent / "requests.json")
         actual_key = attempts.compatibility(strategy, load(path / "manifest.yaml"), cfg["platform"], cfg["versions"], cfg["engine"], cfg["dtype"],
-            path / "runtime", {p.name: p.read_text() for p in sorted(path.glob("Dockerfile*"))})
+            path / "runtime", {p.name: p.read_text() for p in sorted(path.glob("Dockerfile*"))}, cfg.get("model_config_overrides"))
         return (result.get("verdict") == "PASS" and result.get("attempt_id") == cfg["id"]
                 and result.get("strategy_id") == strategy["id"] and bool(result.get("finished_at"))
                 and result.get("compatibility_key") == cfg.get("compatibility_key") == actual_key
@@ -524,7 +537,7 @@ def retry(base, cid, reason, hypothesis, change, engine=None, phase=None):
         if cid != current(state) or not cell["recovery"] or state["active"]:
             raise ValueError("Only the current interrupted/failed operation can be retried.")
         with execution_slot(base):
-            observed = observed_resources(cell["attempt"])
+            observed = observed_resources(cell["attempt"]) if cell["attempt"] else {"process": None, "containers": [], "images": []}
             if any(r.get("probe_status") == "query_failed" for r in observed["containers"] + observed["images"]):
                 raise ValueError("Inspect resource probe failures before recovery; no duplicate operation authorized.")
             if observed["process"] and observed["process"]["alive"]:
@@ -532,17 +545,20 @@ def retry(base, cid, reason, hypothesis, change, engine=None, phase=None):
             old = copy.deepcopy(cell["recovery"])
             commit(base, state, "recovery_decided", cell_id=cid, previous=old, reason=reason, hypothesis=hypothesis, change=change, observed=observed)
             if phase:
+                if not cell["attempt"]:
+                    raise ValueError("A preparation failure needs a new attempt before retrying a runtime phase.")
                 if phase not in {"serve", "bench", "stop"}:
                     raise ValueError("Retry phase must be serve, bench or stop; new builds use a new attempt.")
                 cell.update(phase=phase, recovery=None)
                 if phase != "stop":
                     cell["outcome"] = "running"
             else:
-                if (Path(cell["attempt"]) / "containers.json").exists():
+                if cell["attempt"] and (Path(cell["attempt"]) / "containers.json").exists():
                     attempts.stop(cell["attempt"])
                 previous = cell["attempt"]
-                selected = engine or load(Path(previous) / "settings.yaml")["engine"]
-                prepare(base, state, cid, engine=selected, reason=reason)
+                selected = engine or (load(Path(previous) / "settings.yaml")["engine"] if previous else None)
+                if not prepare(base, state, cid, engine=selected, reason=reason):
+                    return summary(base, state)
                 cell["attempts"][-1].update(previous_attempt=previous, hypothesis=hypothesis, change=change)
             commit(base, state, "recovery_prepared", cell_id=cid, phase=cell["phase"])
             return summary(base, state)

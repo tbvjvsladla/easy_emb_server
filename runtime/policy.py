@@ -5,15 +5,11 @@ class InputError(ValueError):
     pass
 
 
-def inputs_from(body, config):
+def input_options(body, config):
     if not isinstance(body, dict):
         raise InputError("JSON object required")
     if body.get("model", config["model"]) != config["model"]:
         raise InputError("Unknown model")
-    value = body.get("input")
-    texts = [value] if isinstance(value, str) else value
-    if not isinstance(texts, list) or not texts or not all(isinstance(t, str) and t.strip() for t in texts):
-        raise InputError("input must be a nonempty string or nonempty list of nonempty strings")
     dims = body.get("dimensions", config["dimensions"])
     if isinstance(dims, bool) or not isinstance(dims, int) or dims != config["dimensions"]:
         raise InputError("Request dimensions must match approved serving dimensions")
@@ -24,7 +20,15 @@ def inputs_from(body, config):
     prompts = profile.get("prompts", {})
     if kind is not None and kind not in prompts:
         raise InputError("Unknown input_type; inspect /info for model prompts")
-    prompt = prompts.get(kind, "")
+    return prompts.get(kind, "")
+
+
+def inputs_from(body, config):
+    prompt = input_options(body, config)
+    value = body.get("input")
+    texts = [value] if isinstance(value, str) else value
+    if not isinstance(texts, list) or not texts or not all(isinstance(t, str) and t.strip() for t in texts):
+        raise InputError("input must be a nonempty string or nonempty list of nonempty strings")
     return [prompt + text for text in texts]
 
 
