@@ -364,7 +364,8 @@ export async function discovery(context: EvaluationContext, timeout: number): Pr
     checkpoint_root: {type: 'string'}, entrypoint: {type: 'string'}, skill_paths: {type: 'array', items: {type: 'string'}}});
   const prompt = 'Read AGENTS.md, campaigns/README.md and the four task skill instructions identified by AGENTS.md. ' +
     'This is read-only discovery: do not run models or alter files/configuration. Return the absolute workspace path, context filename, ' +
-    'campaign contract path, documented checkpoint root, the native host CLI entrypoint path and all four skill paths. Use repository-relative paths except workspace. ' +
+    'campaign contract path, the parent directory containing campaign folders, the native host CLI entrypoint path and all four skill paths. ' +
+    'For checkpoint_root return only that parent directory, with no campaign ID, placeholder, trailing slash or checkpoint.json filename. Use repository-relative paths except workspace. ' +
     'Perform this yourself as the selected Luna/none model. Do not change model/provider or delegate to another LLM, subagent, external assistant, router or nested Codex invocation.';
   const invoked = await launch(out, 'call', prompt, true, schema, Math.min(timeout, 600));
   const control = await finish(invoked);
