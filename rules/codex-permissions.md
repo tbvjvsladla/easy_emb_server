@@ -28,6 +28,9 @@
 GPU 관측은 승인한 `embctl init`·`bench`·캠페인 내부의 고정 조회를 사용한다. 직접 `nvidia-smi` 접두어는 프로젝트 allow에 추가하지 않는다. query 뒤에 `--filename`을 붙이면 보호 파일도 덮어쓸 수 있기 때문이다. 직접 진단이 필요하면 이미 승인한 실제 명령 범위를 재사용하며, 새 인자까지 승인된 것으로 해석하지 않는다.
 
 복합 셸의 리다이렉션·변수·glob 때문에 명령 전체가 다른 접두어로 판정될 수 있다. 같은 검증은 고정 진입점으로 실행한다.
+Codex 0.163.0의 실제 동일 세션 관측에서 모든 token을 double quote한 명령은 임시 PID namespace에서 실행됐고, 같은 argv의 plain 명령은 기존 allow 규칙으로 host namespace에서 실행됐다.
+실행 파일·진입점·고정 옵션은 plain word로 유지하고 공백·특수문자를 가진 값만 POSIX 인용한다. JSON argv 표현 자체를 shell escaping으로 사용하지 않는다.
+이는 기존 승인 규칙에 맞는 명령 생성 계약이며 권한 확대나 namespace 게이트 해제는 아니다.
 
 ```bash
 node tools/verify.ts

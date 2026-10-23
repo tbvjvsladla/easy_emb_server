@@ -94,6 +94,8 @@ node tools/embctl.ts campaign reopen --campaign output/campaigns/<id> --cell <�
 프로세스 소유권은 관측한 PID namespace·boot·생성 시각까지 대조한다. 다른 namespace나 관측 불가 상태는
 종료로 판정하지 않으며 원래 실행 환경에서 고정 `campaign step/run` 진입점으로 재개한다.
 PID 1의 실제 argv[0]가 `codex-linux-sandbox`인 일시 실행 환경에서는 새 detached worker를 시작하지 않는다.
+`EPHEMERAL_EXECUTION_NAMESPACE`가 나오면 승인된 실행 파일·진입점·고정 인자를 불필요한 따옴표로 감싸지 않은 단일 명령으로 호출한다.
+공백이나 shell 특수문자를 포함하는 값만 안전하게 인용한다. 평가 driver는 이 명령 문자열을 코드로 생성하며 호출자는 그대로 사용한다.
 프로젝트 실행 규칙을 바꾼 직후 기존 세션에 반영되지 않았다면 신뢰된 새 Codex 세션에서 같은 진입점을 사용한다.
 hint-publisher와 hint 태그 발행은 구현하지 않는다.
 

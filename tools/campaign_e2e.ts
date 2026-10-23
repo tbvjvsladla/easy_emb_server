@@ -488,11 +488,22 @@ function verifiedControlThreads(directory: string): Set<string> {
   return found;
 }
 
+/** Renders literal shell arguments while keeping plain words visible to command rules. */
+export function shellCommand(argv: readonly string[]): string {
+  if (argv.length === 0) throw new GateError('EVALUATION_COMMAND', 'A command needs an executable.');
+  return argv.map((argument) => {
+    if (argument.includes('\0')) throw new GateError('EVALUATION_COMMAND', 'Shell arguments cannot contain NUL.');
+    return /^[A-Za-z0-9_./:@%+,-]+$/u.test(argument) ? argument : `'${argument.replaceAll("'", "'\\''")}'`;
+  }).join(' ');
+}
+
 function campaignPrompt(base: string, timeout: number): string {
   const argv = [process.execPath, path.join(ROOT, 'tools/embctl.ts'), 'campaign', 'run', '--campaign', absolutePath(base), '--timeout', String(Math.max(1, Math.floor(timeout - 60)))];
   const statusArgv = [process.execPath, path.join(ROOT, 'tools/embctl.ts'), 'campaign', 'status', '--campaign', absolutePath(base)];
   return 'Read AGENTS.md and campaigns/README.md. Operate this already declared campaign using its actual approved receipts and project skills. ' +
-    `Start by reading its canonical status with this argv: ${JSON.stringify(statusArgv)}. Then continue with exactly this run argv in the workspace: ${JSON.stringify(argv)}. ` +
+    `In working directory ${ROOT}, read its canonical status with this exact shell command:\n${shellCommand(statusArgv)}\n` +
+    `Then continue with this exact shell command:\n${shellCommand(argv)}\n` +
+    'Copy each command verbatim into the shell tool cmd field; do not add quoting around its words, assignments, redirects or extra wrappers. ' +
     'Continue until a report, actual input-required, or an evidenced unresolved limit. Finite in-strategy diagnosis, declared recovery knobs and attempt-local changes allowed by the frozen skills are authorized. ' +
     'Read actual worker, attempt and resource evidence; record reason, hypothesis, actual change or new observation for recovery. Keep all failed attempts. ' +
     'Use only campaign CLI mutations; observe live owners and let finite workers finish. Do not initialize campaigns, invent approval, answer HITL, edit source/skills/policy/configuration, model files, strategy receipts, checkpoint/declaration, ' +
