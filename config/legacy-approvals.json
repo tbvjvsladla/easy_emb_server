@@ -1,0 +1,220 @@
+{
+  "schema": "embedding-legacy-approval-index/1",
+  "receipts": [
+    {
+      "receipt_id": "030b131ae2f0281a",
+      "receipt_digest": "9aae3f51cd6a27ba9df36b04b5bd31b7233f20689b32beaec00eb42355884536",
+      "authorization_sha256": "4597520e862f9f324ef10246fc4454bf3189bebe2ca5d1b8e594e6af4805d970"
+    },
+    {
+      "receipt_id": "085db51a61439429",
+      "receipt_digest": "a3901d978b99f8be800c7de344cf811e2dd04c44b9d3a5d1be6d2ae79360ea48",
+      "authorization_sha256": "4597520e862f9f324ef10246fc4454bf3189bebe2ca5d1b8e594e6af4805d970"
+    },
+    {
+      "receipt_id": "0a369313975101b7",
+      "receipt_digest": "8d4cd819b6395a828eaed9bcb87a669aa3522a592573bb26c25a86c75704f9ee",
+      "authorization_sha256": "4597520e862f9f324ef10246fc4454bf3189bebe2ca5d1b8e594e6af4805d970"
+    },
+    {
+      "receipt_id": "11466ca3baa4b009",
+      "receipt_digest": "22170a3705b250651ca155a37bc2a39884c9975c983862bf2a317f2944cebd96",
+      "authorization_sha256": "4597520e862f9f324ef10246fc4454bf3189bebe2ca5d1b8e594e6af4805d970"
+    },
+    {
+      "receipt_id": "11c6a8a777318548",
+      "receipt_digest": "0dc1468192975af398aee1a49dcedfd8988fa365b9420a1c3a60fee9be836aa1",
+      "authorization_sha256": "4597520e862f9f324ef10246fc4454bf3189bebe2ca5d1b8e594e6af4805d970"
+    },
+    {
+      "receipt_id": "1cd2de239fcf5872",
+      "receipt_digest": "ef588d86a074fd315efcc363f3134fdaf4f0ff444f268d0028758004e98b8913",
+      "authorization_sha256": "4597520e862f9f324ef10246fc4454bf3189bebe2ca5d1b8e594e6af4805d970"
+    },
+    {
+      "receipt_id": "1e7541549407ee54",
+      "receipt_digest": "721540438671961865d2d6b9ef9351d1b46506bdc5759db02b02a88a43d67439",
+      "authorization_sha256": "d431f829db09962dd52ab9ffb7118e4caee2236a075f631deb425e07119777d9"
+    },
+    {
+      "receipt_id": "2115aac3a0376d10",
+      "receipt_digest": "7b09a1535fdd11119818e419b9157cdce4684660b85e0b13dae0e4630300e6e4",
+      "authorization_sha256": "4597520e862f9f324ef10246fc4454bf3189bebe2ca5d1b8e594e6af4805d970"
+    },
+    {
+      "receipt_id": "27814e46d329c71a",
+      "receipt_digest": "07633d7623fc382cd1d70844c1b84163143d40714a74fa21f30d71708218cd5d",
+      "authorization_sha256": "4597520e862f9f324ef10246fc4454bf3189bebe2ca5d1b8e594e6af4805d970"
+    },
+    {
+      "receipt_id": "2a80f420eb5b3302",
+      "receipt_digest": "67193e66a18b96e5282e930cb07fd962fd00b9bbc54128f4a80bba96bef771a8",
+      "authorization_sha256": "d431f829db09962dd52ab9ffb7118e4caee2236a075f631deb425e07119777d9"
+    },
+    {
+      "receipt_id": "2efc40bc2c43be5c",
+      "receipt_digest": "b652be3c9ad5f043547a165714baa4ec77decee8d037d375a235b8d831620c3e",
+      "authorization_sha256": "4597520e862f9f324ef10246fc4454bf3189bebe2ca5d1b8e594e6af4805d970"
+    },
+    {
+      "receipt_id": "39c5831a39cd108e",
+      "receipt_digest": "586945156d29346ca1f978d62749f3a11dd9c316b81c36ba8494ead511b8782f",
+      "authorization_sha256": "4597520e862f9f324ef10246fc4454bf3189bebe2ca5d1b8e594e6af4805d970"
+    },
+    {
+      "receipt_id": "3be15d69febc9e01",
+      "receipt_digest": "756478839fbef338b14da31ed3794f3ba08899af65d1f0d85f9c3f3fd0a79f43",
+      "authorization_sha256": "4597520e862f9f324ef10246fc4454bf3189bebe2ca5d1b8e594e6af4805d970"
+    },
+    {
+      "receipt_id": "3ed06fbaba548c03",
+      "receipt_digest": "571b8a8a6d536b5eb39bf078013bae1eff1fe25119e09c1851905e35ca5c0389",
+      "authorization_sha256": "4597520e862f9f324ef10246fc4454bf3189bebe2ca5d1b8e594e6af4805d970"
+    },
+    {
+      "receipt_id": "44f00b63b33ec981",
+      "receipt_digest": "0419e99a9bf9c4badd41a21315da8080222650a600fd4be615b3b67998434539",
+      "authorization_sha256": "d431f829db09962dd52ab9ffb7118e4caee2236a075f631deb425e07119777d9"
+    },
+    {
+      "receipt_id": "4bf9c258eb6c933c",
+      "receipt_digest": "dfbca359c0cd385e0272a4992c75c9de0a07e5294f23c67d5b325388d35f228d",
+      "authorization_sha256": "4597520e862f9f324ef10246fc4454bf3189bebe2ca5d1b8e594e6af4805d970"
+    },
+    {
+      "receipt_id": "510f50faf8b13f36",
+      "receipt_digest": "419431f81c1cd45aa02f3219cc632ba250c7118d295110d8b067a81b6549e2bd",
+      "authorization_sha256": "4597520e862f9f324ef10246fc4454bf3189bebe2ca5d1b8e594e6af4805d970"
+    },
+    {
+      "receipt_id": "5368d4f288ce5de7",
+      "receipt_digest": "e2f1cdffd0418245f5f709fd7f753ca9fcebc6e0ae1143c4d50f4791bd9c3715",
+      "authorization_sha256": "4597520e862f9f324ef10246fc4454bf3189bebe2ca5d1b8e594e6af4805d970"
+    },
+    {
+      "receipt_id": "53d5caf193dfb2ee",
+      "receipt_digest": "357aa403a9085aea0b0d4863da02a70fe0406e89f77bdd3811fcc5d33e02b5a8",
+      "authorization_sha256": "4597520e862f9f324ef10246fc4454bf3189bebe2ca5d1b8e594e6af4805d970"
+    },
+    {
+      "receipt_id": "5564e6896b665038",
+      "receipt_digest": "d86c6d76937b29a53281b54656275158de7d418e4f8e9891c0502042ee5b4961",
+      "authorization_sha256": "4597520e862f9f324ef10246fc4454bf3189bebe2ca5d1b8e594e6af4805d970"
+    },
+    {
+      "receipt_id": "5ad752e128c50efb",
+      "receipt_digest": "773c069a8652215059fa0c426cbd4a0bc015d42d67d57f99f14762ab81ef58c3",
+      "authorization_sha256": "d431f829db09962dd52ab9ffb7118e4caee2236a075f631deb425e07119777d9"
+    },
+    {
+      "receipt_id": "624738ed58a6b04b",
+      "receipt_digest": "9c73f241548a88e50e36936cef8e9980d87a920b21385532b989a448a6d58277",
+      "authorization_sha256": "4597520e862f9f324ef10246fc4454bf3189bebe2ca5d1b8e594e6af4805d970"
+    },
+    {
+      "receipt_id": "637725c14e5e9b7a",
+      "receipt_digest": "6b805ae7202551b3d8357ef1b78e4a7ee01c5b68fe0c3e8c1ccd01613e07122a",
+      "authorization_sha256": "4597520e862f9f324ef10246fc4454bf3189bebe2ca5d1b8e594e6af4805d970"
+    },
+    {
+      "receipt_id": "663d9450c568a67f",
+      "receipt_digest": "e923495b7b77f2e6c0245f31ffb247bd8257eb91aa24614c8a33d381ca93769a",
+      "authorization_sha256": "4597520e862f9f324ef10246fc4454bf3189bebe2ca5d1b8e594e6af4805d970"
+    },
+    {
+      "receipt_id": "7540ab133f872ce0",
+      "receipt_digest": "9fc3baf848003ec4c71f7c0cced2e0de53dd9c0e921b921cad07dd3ee082afb1",
+      "authorization_sha256": "4597520e862f9f324ef10246fc4454bf3189bebe2ca5d1b8e594e6af4805d970"
+    },
+    {
+      "receipt_id": "7bd04e436adbe5b4",
+      "receipt_digest": "c57a9be8050b32a12a53babba785644770fe2227ec448b3925f23dd51d0fc481",
+      "authorization_sha256": "4597520e862f9f324ef10246fc4454bf3189bebe2ca5d1b8e594e6af4805d970"
+    },
+    {
+      "receipt_id": "86b4464471acad94",
+      "receipt_digest": "9525a1c47ed5182c7843b2996e6ebd43b42570a99b2018c5fe17774306aa17c5",
+      "authorization_sha256": "4597520e862f9f324ef10246fc4454bf3189bebe2ca5d1b8e594e6af4805d970"
+    },
+    {
+      "receipt_id": "899930f0663d60f2",
+      "receipt_digest": "3f866f5bec6553d3978ff6254735871a33ab547be08fa77411fbf64724692f8b",
+      "authorization_sha256": "4597520e862f9f324ef10246fc4454bf3189bebe2ca5d1b8e594e6af4805d970"
+    },
+    {
+      "receipt_id": "8e8fb909e555766f",
+      "receipt_digest": "077d6d70e92357b339084184e70a849c8ee4004d86fdfde80f282486efa9d6e5",
+      "authorization_sha256": "4597520e862f9f324ef10246fc4454bf3189bebe2ca5d1b8e594e6af4805d970"
+    },
+    {
+      "receipt_id": "9ebf886a5840ee1a",
+      "receipt_digest": "a6f90cef90a703b3464dd9d34ff81d2c618712dee79ec9524998dcdc4fec08ba",
+      "authorization_sha256": "4597520e862f9f324ef10246fc4454bf3189bebe2ca5d1b8e594e6af4805d970"
+    },
+    {
+      "receipt_id": "a56f1146ddfce8ad",
+      "receipt_digest": "833ecea964ee7ee82b6048b5035475ec2628e22de6fab8fb252106293ab9fbc1",
+      "authorization_sha256": "4597520e862f9f324ef10246fc4454bf3189bebe2ca5d1b8e594e6af4805d970"
+    },
+    {
+      "receipt_id": "b7951ce6938f1325",
+      "receipt_digest": "926a7908202d03baed10c2fe0a5580b5b69006bfcc7fce5f1a3b8b62006234f7",
+      "authorization_sha256": "4597520e862f9f324ef10246fc4454bf3189bebe2ca5d1b8e594e6af4805d970"
+    },
+    {
+      "receipt_id": "c276425d14b913c5",
+      "receipt_digest": "c586a9f3a08d68afbe3bfa5ba1a4e98fe3223edf60d21be82ea03eb55526fe19",
+      "authorization_sha256": "4597520e862f9f324ef10246fc4454bf3189bebe2ca5d1b8e594e6af4805d970"
+    },
+    {
+      "receipt_id": "c5ffd0c2c7864018",
+      "receipt_digest": "b70a92882dd3ef31cdc589577750e8a54b39676bcb1f95b5a8b99d834a24162e",
+      "authorization_sha256": "4597520e862f9f324ef10246fc4454bf3189bebe2ca5d1b8e594e6af4805d970"
+    },
+    {
+      "receipt_id": "d675c3722ed770cd",
+      "receipt_digest": "c240e38b8905e0b33c215b422d74d97912f939ef3a068f594183aaf4685503d5",
+      "authorization_sha256": "d431f829db09962dd52ab9ffb7118e4caee2236a075f631deb425e07119777d9"
+    },
+    {
+      "receipt_id": "d8378dd1e1921158",
+      "receipt_digest": "1e4baa8069dcad7d0eb5e1ff5d1e8149d11ce2e3fccff8e2a7072b82e88291eb",
+      "authorization_sha256": "4597520e862f9f324ef10246fc4454bf3189bebe2ca5d1b8e594e6af4805d970"
+    },
+    {
+      "receipt_id": "dd0819ff0a029f54",
+      "receipt_digest": "fc840d21f0f6277775cdb6b0b76bc6ce7ad9be77600dc7ec3f2b4d623b38022b",
+      "authorization_sha256": "4597520e862f9f324ef10246fc4454bf3189bebe2ca5d1b8e594e6af4805d970"
+    },
+    {
+      "receipt_id": "df2265b82c08428e",
+      "receipt_digest": "811343e7384d855e40c2e1d5a8fb1f490640c3397a50cde29606e85135d68e5e",
+      "authorization_sha256": "4597520e862f9f324ef10246fc4454bf3189bebe2ca5d1b8e594e6af4805d970"
+    },
+    {
+      "receipt_id": "e086b57e85c6f398",
+      "receipt_digest": "77d95f1eb148ee2fe8f868cc9382ba659c0480bb838367b7f5fe9406302ef57a",
+      "authorization_sha256": "4597520e862f9f324ef10246fc4454bf3189bebe2ca5d1b8e594e6af4805d970"
+    },
+    {
+      "receipt_id": "e1094cf8cc91255d",
+      "receipt_digest": "a10d3ad28cf98e059c4f64665365b61876e2fe128049026326162ef1222d09d8",
+      "authorization_sha256": "4597520e862f9f324ef10246fc4454bf3189bebe2ca5d1b8e594e6af4805d970"
+    },
+    {
+      "receipt_id": "e2594140792b9187",
+      "receipt_digest": "0f51070f3cc5b794258174bbf63afe42208a5c0ccc6bf62168b689842a64d050",
+      "authorization_sha256": "4597520e862f9f324ef10246fc4454bf3189bebe2ca5d1b8e594e6af4805d970"
+    },
+    {
+      "receipt_id": "e25f081555be0e80",
+      "receipt_digest": "6c70049265e1217559a4f7b6256916a2bbfa6dfff3a78561bc98dacf93e82a4c",
+      "authorization_sha256": "4597520e862f9f324ef10246fc4454bf3189bebe2ca5d1b8e594e6af4805d970"
+    },
+    {
+      "receipt_id": "e66667d8f830c69b",
+      "receipt_digest": "ea8a6ebafe93e94a4b5915c56d74f7071f985bfb4e3a3b51bde407156d12e5b2",
+      "authorization_sha256": "d431f829db09962dd52ab9ffb7118e4caee2236a075f631deb425e07119777d9"
+    }
+  ]
+}

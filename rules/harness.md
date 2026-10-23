@@ -1,0 +1,46 @@
+# 결정론적 실행 계약
+
+호스트 제어는 `node tools/embctl.ts`의 TypeScript 게이트가 수행한다. 에이전트는 목표·근거·복구 가설을 제안하고, 코드는 승인·상태·소유권·입력·검증 증거를 판별한다. 생성 컨테이너의 TEI Rust와 sentence-transformers/PyTorch 및 API 서버 Python은 각 런타임의 기본 언어를 유지한다.
+
+## 상태와 안전불변식
+
+```mermaid
+flowchart LR
+  H[HW 관측] --> A[모델 조사와 실제 HITL]
+  A --> U[공식 릴리스 입력 고정]
+  U --> P[prepare]
+  P --> B[build]
+  B --> S[serve]
+  S --> V[bench]
+  V --> T[stop과 보고]
+  B & S & V --> R[근거와 한도가 있는 recovery]
+  R --> P
+```
+
+| 불변식 | 코드 정본 | 차단·재개 방식 |
+|---|---|---|
+| 실제 사람의 장치 → 토큰 → 차원 선택 | `tools/embedding/models.ts` | 승인 원문 줄·해시·선택값, 모델 fingerprint, manifest snapshot 대조. 모델/범위 변경은 HITL, 무결성 오류는 복구 |
+| 환경 적용성 | `tools/embedding/hardware.ts` | 현재 호스트와 승인 당시의 구조·실행 환경·선택 장치 대조. 미관측/실패를 지원으로 추정하지 않음 |
+| 입력 고정 | `tools/embedding/upstream.ts`, `attempts.ts` | 공식 최신 안정 릴리스 commit, 이미지 digest, 해시가 있는 의존성 lock, 실제 recipe/runtime/정책/스킬을 attempt에 연결 |
+| 단일 실행 소유자 | `tools/embedding/processes.ts`, `campaign.ts` | host → campaign → attempt 실행 lease, boot/start/PID, checkpoint active phase 대조. 하위 실제 명령이 lease를 상속 |
+| 실패 후 유한 복구 | `tools/embedding/attempts.ts`, `campaign.ts` | 실패·가설·실제 조건 변경 또는 새 관측 요구. attempt/시간 한도 안에서만 재시도 |
+| 현재 증거의 PASS | `tools/embedding/bench.ts` | 같은 attempt의 기능검사·요청 회계·실측·사후 health와 컨테이너 정체성 검증. mock/과거 PASS는 새 PASS로 채택하지 않음 |
+| 평가 조건 보존 | `tools/campaign_e2e.ts` | 소스·정책·upstream과 그룹별 조건 고정, 실제 Codex 세션의 model/effort 및 도구 호출 증거 대조 |
+
+서빙 HITL은 실행 권한 승인과 별개다. `approve`에 임의의 문자열을 넣거나 도구 출력·에이전트 문장을 사람의 답으로 바꾸지 않는다. 새 승인은 실제 Codex session 저장소의 session ID·파일명·사용자 원문 줄을 검사한다. 기존 실제 영수증은 `config/legacy-approvals.json`에 고정한 원래 43개의 ID·digest·승인 원문 해시와 범위를 대조한다. 새로 만든 schema-1 파일을 과거 승인으로 받아들이지 않는다. 파일 해시는 보존 무결성을 확인하며 동일 사용자에 의한 의도적 파일 위조까지 인증하는 보안 장치는 아니다.
+
+## 조절할 수 있는 값
+
+장치·입력 상한·차원은 승인 영수증에 고정한다. 엔진·dtype·유한 phase timeout·builder·선언된 recipe는 코드가 허용하는 복구 조건 안에서 조절한다. 출력 차원을 바꾸거나 실패를 건너뛰는 `force/pass/skip-check` knob는 없다.
+
+새 recipe/runtime/소스는 새 attempt에 반영한다. 기존 attempt의 생성 파일이나 `settings.yaml`을 손으로 수정해 판정을 바꾸지 않는다. 선언 recipe도 고정 base/의존성 설치/entrypoint를 유지하며 허용한 ENV와 주석용 LABEL만 추가한다. 새 패키지·실행 명령은 개발에서 입력 계약을 검토하고 다시 고정해야 한다. 캠페인의 비교 조건은 선언 때 고정하며 달라지면 새 셀이다. `campaign retry --phase ...`는 동일 설정에서 새로운 관측 근거로 위상을 재수행할 때 사용한다. 설정 변경은 새 attempt로 생성한다. 구체적 허용값·한도의 정본은 코드와 attempt의 `recovery_policy`다.
+
+stop/capture는 복구 중 소스나 모델 파일이 바뀌었어도 원래 승인·설정·자산 ID·이미지·labels·실행 lease를 대조해 소유 자산을 정리할 수 있다. 이 제한된 정리 경로는 build/serve/bench의 현재 입력 검사를 우회하지 않는다.
+
+긴 실행은 [캠페인 규약](../campaigns/README.md)에 따라 status → step/run으로 재개한다. checkpoint와 실제 프로세스·컨테이너가 불일치하면 기록된 원인을 조사한다. 살아 있는 작업을 덮어쓰거나 상태 파일을 직접 고치지 않는다. 오류 JSON의 `code`, `evidence`, `next_action`, `retryable`과 worker 로그를 사용한다.
+
+## 개발과 평가
+
+네 스킬은 이 계약과 코드 진입점을 안내한다. 모델이 설명을 생략하더라도 진입점의 필수 게이트는 수행된다. 동일 사용자 권한의 임의 Docker/파일 명령 자체를 격리하는 운영체제 보안 정책은 아니다. 해당 우회 실행은 하네스 증거로 인정하지 않는다.
+
+소스 변경은 상위 모델로 구현·검토하고 `node tools/verify.ts`로 검증한다. 최종 Luna none 평가는 소스와 입력을 고정한 뒤 별도 evaluation에서 실행한다. 평가 중 소스 수정이나 상위 모델의 문제 해결 개입이 필요하면 그 평가의 실패 증거를 보존하고 개발로 돌아온다. 수정 후 새 evaluation 전체를 수행하며 이전 일부 PASS를 섞지 않는다.

@@ -46,6 +46,9 @@ enabled = true
 "sbert.net" = "allow"
 "docs.pytorch.org" = "allow"
 
+"registry.npmjs.org" = "allow"
+"github-cloud.githubusercontent.com" = "allow"
+
 [permissions.embedding-workspace.network.unix_sockets]
 "/var/run/docker.sock" = "allow"
 "/run/docker.sock" = "allow"

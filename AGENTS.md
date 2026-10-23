@@ -6,6 +6,7 @@ Codex가 기본 에이전트다. 싱글 노드의 HW를 관측하고 임베딩 �
 
 - 운영 규칙: [rules/workflow.md](rules/workflow.md). 문서 발행: [rules/docs.md](rules/docs.md).
 - 실행 승인 저장·반복 검증: [rules/codex-permissions.md](rules/codex-permissions.md). 승인된 동일 범위는 반복 질문하지 않고 고정 진입점과 Codex 규칙을 재사용한다.
+- 결정론적 실행 게이트: [rules/harness.md](rules/harness.md). 호스트 제어는 `node tools/embctl.ts`, 컨테이너 내부는 각 엔진/API의 기본 언어를 유지한다. 승인·입력·소유권·측정 게이트를 우회하거나 checkpoint를 손으로 편집하지 않는다.
 - 공통 서빙 계약은 이 파일과 작업 규칙, 캠페인 재개 계약은 [campaigns/README.md](campaigns/README.md)다. 실제 승인 Seed·인터뷰는 로컬 `.ouroboros/`에 보존하며 배포하지 않는다. 모델별 실행에는 실제 사용자 승인 영수증이 필요하다.
 - 장시간 E2E·compact 이후·반복 워커 호출은 [campaigns/README.md](campaigns/README.md)에 따라 `campaign status` → `campaign step/run`으로 재개한다. `output/campaigns/<id>/checkpoint.json`에서 승인·진행·미결 HITL·실행 소유권을 복원한다. 같은 목표의 복구는 셀 내부 attempt이며 비교 조건 변경은 새 셀이다.
 - HW 범위를 CPU 아키텍처·GPU 벤더 목록으로 제한하지 않는다. manifest의 관측값과 승인 전략으로 어댑터·팩토리가 경로를 선택한다. 실제 실증 여부는 따로 기록한다.

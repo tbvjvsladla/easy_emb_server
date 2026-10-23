@@ -1,68 +1,64 @@
-# Native Codex execution rules. Trusted project layer; load on a new session.
-# Serving HITL receipts remain mandatory in AGENTS.md and embctl.
-
+# Native fixed TypeScript entrypoints. Strategy HITL remains mandatory.
 prefix_rule(
-    pattern = ["python3", "tools/verify.py"],
+    pattern = ["node", "tools/verify.ts"],
     decision = "allow",
-    justification = "Project Python/wiki regression tests and fixed log capture.",
-    match = ["python3 tools/verify.py --suite python", "python3 tools/verify.py --suite wiki"],
-    not_match = ["python3 tools/other.py", "python3 -c \"print(1)\""],
+    justification = "Fixed typecheck, lint, harness and wiki tests with recorded logs.",
+    match = ["node tools/verify.ts", "node tools/verify.ts --suite harness"],
+    not_match = ["node tools/other.ts", "node -e 'process.exit()'"],
 )
-
 prefix_rule(
-    pattern = ["python3", "tools/embctl.py", ["init", "inventory", "inspect", "render", "build", "serve", "bench", "capture", "report", "stop"]],
+    pattern = ["node", "tools/embctl.ts", ["init", "inventory", "inspect", "render", "build", "serve", "bench", "capture", "report", "stop"]],
     decision = "allow",
-    justification = "Approved embedding lifecycle; the helper validates serving strategy and resource ownership.",
-    match = ["python3 tools/embctl.py inspect --model /path/to/model", "python3 tools/embctl.py build --strategy output/model/strategies/approved.yaml"],
-    not_match = ["python3 tools/embctl.py approve --model /path/to/model", "python3 -c \"print(1)\""],
+    justification = "Approved lifecycle guarded by receipts, immutable inputs and resource ownership.",
+    match = ["node tools/embctl.ts inspect --model /path/to/model", "node tools/embctl.ts build --strategy output/model/strategies/approved.yaml"],
+    not_match = ["node tools/embctl.ts approve --model example", "node -e 'process.exit()'"],
 )
-
 prefix_rule(
-    pattern = ["python3", "-m", "unittest", "discover", "-s", "tests", "-v"],
+    pattern = ["node", "tools/embctl.ts", "upstream", ["prepare", "check"]],
     decision = "allow",
-    justification = "Previously approved project Python regression command.",
-    match = ["python3 -m unittest discover -s tests -v"],
-    not_match = ["python3 -m unittest discover -s other-tests -v"],
+    justification = "Official latest stable source preparation and immutable input verification.",
+    match = ["node tools/embctl.ts upstream prepare", "node tools/embctl.ts upstream check"],
+    not_match = ["node tools/embctl.ts upstream arbitrary"],
 )
-
 prefix_rule(
-    pattern = ["python3", "tools/embctl.py", "campaign", ["init", "status", "step", "run", "attach", "retry", "resolve", "reopen", "report"]],
+    pattern = ["node", "tools/embctl.ts", "campaign", ["init", "status", "step", "run", "attach", "retry", "resolve", "reopen", "report"]],
     decision = "allow",
-    justification = "Approved campaign checkpoints and recovery; existing strategy receipts and worker leases remain required.",
-    match = ["python3 tools/embctl.py campaign run --campaign output/campaigns/example --timeout 600", "python3 tools/embctl.py campaign retry --campaign output/campaigns/example --cell a --reason failure --hypothesis fix --change patch"],
-    not_match = ["python3 tools/embctl.py approve --model /path/to/model", "python3 tools/embctl.py campaign answer --campaign output/campaigns/example --answer answer.json", "python3 tools/embctl.py campaign _work --campaign output/campaigns/example", "python3 -c \"print(1)\""],
+    justification = "Approved checkpoint and bounded recovery entrypoints; no manufactured user answer.",
+    match = ["node tools/embctl.ts campaign run --campaign output/campaigns/example --timeout 600"],
+    not_match = ["node tools/embctl.ts campaign answer --campaign example --answer answer.json", "node tools/embctl.ts campaign _work --campaign example", "node tools/embctl.ts approve --model example"],
 )
-
 prefix_rule(
-    pattern = ["python3", "tools/campaign_e2e.py", "--mode", ["discovery", "continuity"]],
+    pattern = ["node", "tools/campaign_e2e.ts", "--mode", ["freeze", "discovery", "campaign", "continuity"]],
     decision = "allow",
-    justification = "Project continuity driver: real Codex calls and bounded caller termination for a campaign with approved receipts.",
-    match = ["python3 tools/campaign_e2e.py --mode discovery", "python3 tools/campaign_e2e.py --mode continuity --campaign output/campaigns/example --timeout 1800"],
-    not_match = ["python3 tools/campaign_e2e.py --mode arbitrary", "python3 tools/other.py"],
+    justification = "Fixed actual Luna/none evaluation, approved receipts and owned caller interruption.",
+    match = ["node tools/campaign_e2e.ts --mode discovery --evaluation output/evaluations/example", "node tools/campaign_e2e.ts --mode continuity --evaluation output/evaluations/example --campaign output/campaigns/example"],
+    not_match = ["node tools/campaign_e2e.ts --mode arbitrary", "codex exec"],
 )
-
+prefix_rule(
+    pattern = ["node", "tools/review.ts"],
+    decision = "allow",
+    justification = "Fixed highest-model local source review; extra CLI arguments are rejected.",
+    match = ["node tools/review.ts"],
+    not_match = ["codex review --uncommitted", "node tools/other.ts"],
+)
+prefix_rule(
+    pattern = ["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"],
+    decision = "allow",
+    justification = "Install the committed exact host toolchain lock without lifecycle scripts.",
+    match = ["npm ci --ignore-scripts --no-audit --no-fund"],
+    not_match = ["npm exec arbitrary", "npm install arbitrary"],
+)
 prefix_rule(
     pattern = ["docker", ["ps", "images"]],
     decision = "allow",
-    justification = "Read-only container and image inventory used before and after the approved campaign.",
+    justification = "Read-only inventory of the approved workload.",
     match = ["docker ps -a --filter label=easy-emb.attempt", "docker images"],
-    not_match = ["docker run example", "docker system prune", "docker rm example"],
+    not_match = ["docker run example", "docker system prune"],
 )
-
 prefix_rule(
     pattern = ["docker", "stats", "--no-stream"],
     decision = "allow",
-    justification = "One-shot resource observation during the approved embedding workload.",
+    justification = "One-shot resource observation.",
     match = ["docker stats --no-stream"],
     not_match = ["docker stats", "docker system prune"],
-)
-
-
-
-prefix_rule(
-    pattern = ["python3", "tools/review.py"],
-    decision = "allow",
-    justification = "Fixed local Codex review entrypoint rejects all extra arguments before launching the reviewer.",
-    match = ["python3 tools/review.py"],
-    not_match = ["codex review --uncommitted", "python3 tools/other.py"],
 )

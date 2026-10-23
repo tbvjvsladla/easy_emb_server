@@ -5,14 +5,14 @@ description: "Inspect an embedding model, collect device/context/dimension HITL 
 
 # 임베딩 모델 서빙
 
-모델 프로필·서빙 HITL·실효 설정·기동·런타임 조정과 모델별 .yaml/.sh/.env 및 필요한 런타임 패치를 소유한다.
+모델 프로필·HITL·실효 설정·기동과 런타임 조정을 소유한다. [공통 게이트 계약](../../../rules/harness.md)을 따른다.
 
-- 먼저 wiki-desk로 같은 모델·아키텍처·실패의 근거를 조회한다. `python3 tools/embctl.py inspect --model <경로>`로 config·ST modules·권장 prompt/pooling/normalization·지원 길이/차원을 조사한다.
-- **CPU/GPU를 먼저**, 최대 입력 토큰과 출력 차원을 각각 HITL로 확정한다. 원래 차원과 지원/권장 축소를 보여 주고 선택한다. 확인되지 않은 값은 표시한다. 모델별 값을 임의로 채워 승인됐다고 기록하지 않는다.
-- `python3 tools/embctl.py approve --model <경로> --device <장치> --context-window <토큰> --dimensions <차원 또는 native> --approval-reference <실제 승인 근거>`로 결정과 근거를 기록한다.
-- 모델 권장 설정을 우선하며 없으면 엔진 기본값이라고 표시한다. 엔진/dtype는 자동 결정한다. TEI 가능→TEI, 불가→ST는 같은 선택 장치와 설정에서 적용한다.
-- `python3 tools/embctl.py serve --strategy <승인 전략>`로 생성된 빌드·서빙 자산을 사용한다. TEI 라우터가 모델을 거부할 때도 ST 대체 HTTP 경로가 실제로 기동해야 한다.
-- 기본 API는 /v1/embeddings다. 용처·포트·컨테이너 유지 등은 원본 관련 정책과 사용자의 실제 요청에 맞춘다. 기본 API 경로를 반복해서 묻지 않는다.
-- 기동 후 실제 엔진·장치·입력/차원 적용을 확인하고 경량검증에 넘긴다. 과거 PASS·정적 모델 분류·빌드 성공을 현재 서빙 PASS로 삼지 않는다.
+1. wiki-desk에서 같은 모델/아키텍처/실패의 원문을 조회한다. `node tools/embctl.ts inspect --model <경로>`로 config·ST modules·길이·차원·prompt/pooling/normalization을 조사한다.
+2. **CPU/GPU → 최대 입력 토큰 → 출력 차원** 순서로 실제 선택을 받는다. 지원값·추천·원래 차원을 제시한다. 동일 조건을 포함한 기존 실제 승인 영수증은 재사용한다.
+3. 새 승인은 [출처 형식](references/approval.md)을 만든 뒤 `node tools/embctl.ts approve --model <경로> --device <장치> --context-window <토큰> --dimensions <값 또는 native> --approval-reference <JSON파일>`로 기록한다.
+4. upstream에서 빌드한 attempt로 `node tools/embctl.ts serve --attempt <경로> --port <포트>`를 실행한다. 캠페인 소유 작업은 `campaign status → step/run`으로 진행한다.
+5. 실제 엔진·장치·입력 정책을 확인하고 lite-bench로 넘긴다. 기본 API는 `/v1/embeddings`, 엔진/dtype는 자동 판단하며 승인된 세 축을 유지한다.
 
-다른 모델로 넘어가기 전 이 프로젝트가 실행한 컨테이너의 상태와 필요한 로그를 보존한다. 모델·전략·시도·산출물·문서를 연결하고 미해결 문제는 새 세션이 조회해 재개하도록 남긴다.
+임의 문자열·도구 출력·에이전트의 결정을 사용자 승인으로 만들지 않는다. TEI 불가/실패는 근거를 남기고 동일 장치에서 ST로 복구한다. runtime/recipe 변경은 새 attempt로 연결한다. 과거 PASS·정적 분류·빌드 성공은 현재 서빙 PASS가 아니다.
+
+다음 모델로 넘어가기 전에 소유 컨테이너의 로그·결과를 보존하고 적절히 stop한다. 장시간 실행·재개는 `campaigns/README.md`를 따른다.

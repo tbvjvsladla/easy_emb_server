@@ -5,15 +5,11 @@ description: "Verify a running /v1/embeddings service and execute its declared l
 
 # 경량 임베딩 검증
 
-이 스킬은 반복 가능한 루틴 YAML과 기능검사·경량 측정·실패 분류·판정을 소유한다.
+유한 측정 루틴·기능검사·요청 회계·판정을 소유한다. [공통 게이트 계약](../../../rules/harness.md)을 따른다.
 
-`python3 tools/embctl.py bench --strategy <승인 전략> --base-url <서버> --routine config/lite.yaml`로 실행한다. 적용 루틴·도구 버전·현재 시도·로그·결과는 output에 남긴다.
+1. 실행 중인 attempt와 승인 전략, 선언한 routine을 읽는다. 입력·워밍업·요청 수·동시성·timeout은 코드의 유한 범위 안이어야 한다.
+2. `node tools/embctl.ts bench --attempt <경로> --routine <파일>`로 실행한다. 캠페인 소유 attempt는 `campaign status → step/run`을 사용한다. 별도 서버 주소는 `--base-url`로 지정한다.
+3. [판정 게이트](references/gates.md)에 따라 기능검사·실측·사후 상태·실패 근거를 읽는다. **PASS는 같은 현재 attempt의 기능검사 통과 AND 유효 실측 완료**다.
+4. 전체 대상의 결과·미해결·재개 조건을 보고한다. 전체 수행 완료와 전 모델 PASS를 구별한다.
 
-- 기능검사: 단일/배치 입력과 벡터 수·대응·승인 차원·finite 값, 실제 장치 및 입력 정책의 근거를 확인한다. 빈/오타입·입력 상한은 문서화한 처리 정책에 맞는지 확인한다.
-- 측정: 실행 전에 확정한 입력·워밍업·요청수·동시성·timeout·반복의 유한 루틴을 완료한다. 요청 발행/완료/성공/실패/timeout 회계와 실제 성공 응답·측정 구간을 확인한다.
-- 요청 수·latency·throughput·적용 가능한 RAM/VRAM을 관측값으로 기록한다. 관측 불가 항목은 이유를 밝힌다. 모델 실패와 측정 클라이언트/경로 실패를 구분한다.
-- **PASS = 같은 현재 시도의 기능검사 통과 AND 유효 측정 완료**. 속도 목표가 없으면 임의 성능 문턱을 만들지 않는다. 측정을 쉽게 만들려고 승인 장치·입력 길이·차원을 바꾸지 않는다.
-
-GuideLLM embeddings는 우선 검토 후보이며 실제 호환성과 도입비용을 보고 사용한다. 작은 HTTP runner가 충분하면 사용한다. 도구 선택·버전과 근거를 기록한다. 정확도/MTEB·기준 벡터 비교·생성 전용 지표·전체 adversarial/full sweep은 기본 범위가 아니다.
-
-대표 CPU/GPU 경로와 NAS 대상의 선택 모드 결과를 집계한다. 모든 대상 검증·결과·미해결 보고로 이번 수행을 완료하고 성공만 PASS로 표시한다. 후속 과제는 문서·위키·실제 산출물에서 새 세션이 문제·기시도·재현/재개 조건을 찾을 수 있어야 한다.
+기준 벡터/MTEB/정확도·임의 throughput 문턱은 추가하지 않는다. GuideLLM embeddings 검토 후 채택한 유한 HTTP runner와 선택 이유는 routine에 기록한다. mock/estimated/과거 결과는 새 실측 PASS와 구별한다. 속도를 높이기 위해 승인 장치·토큰·차원을 바꾸지 않는다.
