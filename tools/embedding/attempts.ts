@@ -17,6 +17,7 @@ const DTYPES = new Set(['float32', 'float16', 'bfloat16']);
 const MAX_RECOVERY_ATTEMPTS = 8;
 const MAX_RECOVERY_SECONDS = 14_400;
 const RECIPE_NAMES = new Set(['Dockerfile', 'Dockerfile.gateway']);
+const FAILURE_ARTIFACTS = ['events.jsonl', 'build-backend.log', 'start-api.log', 'start-backend.log', 'container-api.log', 'container-backend.log'];
 
 /** Declares campaign provenance; a matching live worker lease is required as proof. */
 export interface CampaignOwner {
@@ -76,6 +77,24 @@ export interface CheckedAttempt {
   manifest: JsonObject;
   receiptIdentity: string;
   cleanupDrift?: JsonObject[];
+}
+
+/** Describes an existing runtime route without claiming that it has served this model. */
+export interface RuntimeSupport extends JsonObject {
+  status: 'renderable_unverified' | 'adapter_required';
+  kind: 'native_adapter' | 'sentence_transformers' | 'unsupported';
+  adapter_id: string | null;
+  reason: string;
+  source_files: JsonObject;
+}
+
+/** Contains the exact native files shared by rendering and read-only recovery assessment. */
+export interface NativeAssets {
+  recipes: JsonObject;
+  recipeSnapshots: JsonObject;
+  dependencies: JsonObject;
+  dependencyLocks: JsonObject;
+  backendInputs: JsonObject;
 }
 
 interface Inspection {
@@ -372,6 +391,27 @@ export function chooseDtype(strategy: JsonObject, engine: string): string {
   return 'float16';
 }
 
+/** Applies the renderer's adapter gate and identifies the implementation already on disk. */
+export function runtimeSupport(strategy: JsonObject, runtimeRoot = path.join(ROOT, 'runtime')): RuntimeSupport {
+  const profile = asRecord(strategy.profile, 'model profile');
+  const modules = arrayValue(profile.modules ?? [], 'ST modules');
+  const adapters = fs.readFileSync(path.join(runtimeRoot, 'adapters.py'), 'utf8');
+  const server = fs.readFileSync(path.join(runtimeRoot, 'server.py'), 'utf8');
+  const sourceFiles = {'runtime/adapters.py': sha256Bytes(adapters), 'runtime/server.py': sha256Bytes(server)};
+  const native = new Map([['qwen3_vl', 'QwenVLTextAdapter'], ['kanana2vec', 'KananaTextAdapter']]);
+  const adapter = native.get(String(profile.model_type));
+  if (adapter && adapters.includes(`class ${adapter}(`) && adapters.includes(`return ${adapter}(config)`) && server.includes('native_adapter(config)')) {
+    return {status: 'renderable_unverified', kind: 'native_adapter', adapter_id: adapter,
+      reason: 'The native runtime dispatch and adapter implementation are present; fresh serving validation is still required.', source_files: sourceFiles};
+  }
+  if (profile.requires_model_adapter && modules.length === 0) {
+    return {status: 'adapter_required', kind: 'unsupported', adapter_id: null,
+      reason: stringValue(profile.requires_model_adapter), source_files: sourceFiles};
+  }
+  return {status: 'renderable_unverified', kind: 'sentence_transformers', adapter_id: null,
+    reason: 'The renderer permits the declared sentence-transformers path; fresh serving validation is still required.', source_files: sourceFiles};
+}
+
 /** Derives finite container budgets from the approved observed host capacity. */
 export function containerBudget(manifest: JsonObject): {args: string[]; evidence: JsonObject} {
   const host = asRecord(manifest.host, 'host');
@@ -435,6 +475,40 @@ function validateRecipe(content: string, snapshot: ReleaseSnapshot, nativeConten
   if (digest(instructions) !== digest(nativeInstructions)) gate('recipe_dependencies_unfrozen', 'Declared recipes must preserve the native base, entrypoint and exact hashed dependency installation. Only explicit offline/thread/tokenizer settings and easy-emb.note annotations may be added.', [], 'prepare and review a new frozen source contract for additional package or code changes');
 }
 
+/** Validates and constructs frozen native assets without writing or starting a process. */
+export function nativeAssets(cfg: JsonObject, snapshot: ReleaseSnapshot, declaredRecipes: JsonObject = {}, runtimeRoot = path.join(ROOT, 'runtime')): NativeAssets {
+  const native = nativeRecipes(cfg, snapshot);
+  const recipes = recordClone(native);
+  const recipeSnapshots: JsonObject = {};
+  for (const [name, value] of Object.entries(declaredRecipes)) {
+    if (!RECIPE_NAMES.has(name) || (name === 'Dockerfile.gateway' && cfg.engine !== 'tei')) gate('unsupported_recipe', `Recipe ${name} is not supported by this engine.`);
+    const recipe = asRecord(value, 'declared recipe');
+    const content = stringValue(recipe.content, 'recipe content');
+    if (recipe.digest !== digest(content)) gate('recipe_snapshot_changed', 'Declared recipe content does not match its digest.');
+    recipes[name] = content;
+    recipeSnapshots[name] = recipe;
+  }
+  for (const [name, value] of Object.entries(recipes)) validateRecipe(stringValue(value, name), snapshot, stringValue(native[name], 'native recipe'));
+  const dependencies: JsonObject = {};
+  const dependencyLocks: JsonObject = {};
+  for (const role of cfg.engine === 'tei' ? ['gateway'] : ['backend']) {
+    const key = role === 'gateway' ? 'gateway' : stringValue(asRecord(cfg.platform).id);
+    const lock = asRecord(asRecord(snapshot.dependency_locks)[key], 'engine dependency lock');
+    const filename = `requirements.${role}.txt`;
+    dependencies[filename] = stringValue(lock.content);
+    dependencyLocks[role] = {file: filename, sha256: lock.sha256, source: lock.path};
+  }
+  return {recipes, recipeSnapshots, dependencies, dependencyLocks,
+    backendInputs: {dockerfile: recipes.Dockerfile, runtime: textFiles(runtimeRoot, (name) => name.endsWith('.py')), dependencies}};
+}
+
+/** Reads the full native backend build preimage used by the renderer and build tag. */
+export function backendBuildInputs(attemptPath: string): JsonObject {
+  return {dockerfile: fs.readFileSync(path.join(attemptPath, 'Dockerfile'), 'utf8'),
+    runtime: textFiles(path.join(attemptPath, 'runtime'), (name) => name.endsWith('.py')),
+    dependencies: textFiles(attemptPath, (name) => name.startsWith('requirements.') && name.endsWith('.txt'))};
+}
+
 function recoveryScope(cfg: JsonObject): string {
   if (cfg.campaign_owner !== undefined) {
     const owner = asRecord(cfg.campaign_owner);
@@ -465,8 +539,7 @@ function verifyUnstartedIntent(state: JsonObject, active: JsonObject, invocation
   if (!processHasEnded(asRecord(invocation.caller, 'original intent caller'))) gate('recovery_caller_alive', 'The original intent caller is still alive; it may still spawn its worker.');
 }
 
-function boundFailure(directory: string, settings: JsonObject): boolean {
-  const filename = path.join(directory, 'failure.json');
+function boundFailure(directory: string, settings: JsonObject, filename = path.join(directory, 'failure.json')): boolean {
   if (!fs.existsSync(filename)) return false;
   const failure = loadRecord(filename);
   if (failure.schema !== 'embedding-attempt-failure/1') {
@@ -478,7 +551,55 @@ function boundFailure(directory: string, settings: JsonObject): boolean {
   if (sha256Bytes(fs.readFileSync(sourcePath)) !== source.sha256) gate('recovery_failure_evidence_changed', 'The verified worker or reconciliation evidence changed after failure recording.', [sourcePath]);
   const observed = loadRecord(sourcePath);
   if (digest(observed.operation) !== digest(failure.operation) || digest(observed.error) !== digest(failure.error) || (observed.interrupted === true) !== (failure.interrupted === true) || (observed.interrupted_before_worker === true) !== (failure.interrupted_before_worker === true)) gate('recovery_failure_evidence_changed', 'Preserved campaign failure no longer matches its original worker evidence.', [filename, sourcePath]);
+  for (const [name, value] of Object.entries(asRecord(failure.artifacts ?? {}))) {
+    const artifact = asRecord(value, 'preserved failure artifact');
+    const artifactPath = absolutePath(stringValue(artifact.path));
+    if (!FAILURE_ARTIFACTS.includes(name) || !artifactPath.startsWith(path.join(absolutePath(directory), 'failure-evidence') + path.sep) || path.basename(artifactPath) !== name || sha256Bytes(fs.readFileSync(artifactPath)) !== artifact.sha256) gate('recovery_failure_evidence_changed', 'Preserved command or runtime failure bytes changed.', [artifactPath]);
+  }
   return true;
+}
+
+function readCampaignFailures(attempt: CheckedAttempt, cutoff = Infinity): JsonObject[] {
+  const filenames = [path.join(attempt.path, 'failure.json')];
+  const archive = path.join(attempt.path, 'failure-history');
+  if (fs.existsSync(archive)) filenames.push(...fs.readdirSync(archive).filter((name) => name.endsWith('.json')).map((name) => path.join(archive, name)));
+  const candidates = filenames.filter((filename) => fs.existsSync(filename)).map((filename) => ({filename, failure: loadRecord(filename)}))
+    .filter((item) => item.failure.schema === 'embedding-attempt-failure/1' && typeof item.failure.at === 'string' && Date.parse(item.failure.at) <= cutoff)
+    .toSorted((left, right) => Date.parse(stringValue(right.failure.at)) - Date.parse(stringValue(left.failure.at)) || digest(left.failure).localeCompare(digest(right.failure)));
+  const seen = new Set<string>();
+  const failures: JsonObject[] = [];
+  for (const candidate of candidates) {
+    if (!boundFailure(attempt.path, attempt.settings, candidate.filename)) continue;
+    const key = digest(candidate.failure);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    failures.push(candidate.failure);
+  }
+  return failures;
+}
+
+/** Returns every bound campaign failure through the cutoff, newest first and without digest duplicates. */
+export function campaignFailures(attempt: CheckedAttempt, asOf: string): JsonObject[] {
+  const cutoff = Date.parse(asOf);
+  if (!Number.isFinite(cutoff)) gate('recovery_failure_time', 'Campaign failure history requires a finite observation time.');
+  return readCampaignFailures(attempt, cutoff);
+}
+
+function preserveFailureArtifacts(directory: string, operation: JsonObject): JsonObject {
+  const destination = path.join(directory, 'failure-evidence', digest(operation));
+  const artifacts: JsonObject = {};
+  for (const name of FAILURE_ARTIFACTS) {
+    const source = path.join(directory, name);
+    if (!fs.existsSync(source)) continue;
+    const content = fs.readFileSync(source);
+    fs.mkdirSync(destination, {recursive: true});
+    const target = path.join(destination, name);
+    if (fs.existsSync(target)) {
+      if (!fs.readFileSync(target).equals(content)) gate('recovery_failure_evidence_changed', 'An operation cannot replace its already preserved failure bytes.', [target]);
+    } else fs.writeFileSync(target, content, {flag: 'wx'});
+    artifacts[name] = {path: target, sha256: sha256Bytes(content)};
+  }
+  return artifacts;
 }
 
 /** Seals a failure only while its original campaign operation and actual leases still own the attempt. */
@@ -526,10 +647,24 @@ export async function recordCampaignFailure(attemptPath: string, evidencePath: s
     } else if (!worker || !alive(worker) || !sameProcessIdentity(worker, identity())) {
       gate('recovery_worker_owner', 'Only the actual live operation worker may record its completed error.', [sourcePath]);
     }
+    // The worker can end after binding a failure but before committing its
+    // checkpoint. Validate its immutable record and reuse those bytes; the
+    // live event stream already includes campaign_failure_bound at this point.
+    const history = readCampaignFailures(attempt);
+    const previousOperations = history.filter((record) => asRecord(record.operation).operation_id === operationId);
+    for (const record of previousOperations) {
+      if (digest(record.operation) !== digest(active)) gate('recovery_failure_operation', 'An operation cannot replace its previously bound execution inputs.', [sourcePath]);
+    }
+    const evidenceReference = {path: sourcePath, sha256: sha256Bytes(fs.readFileSync(sourcePath))};
+    if (previousOperations.some((record) => digest(record.evidence) === digest(evidenceReference))) return;
+    const preserved = previousOperations.filter((record) => record.artifacts !== undefined);
+    const originalArtifacts = preserved[0]?.artifacts;
+    if (preserved.some((record) => digest(record.artifacts) !== digest(originalArtifacts))) gate('recovery_failure_evidence_changed', 'An operation has conflicting preserved failure artifacts.', [attempt.path]);
     const failure: JsonObject = {schema: 'embedding-attempt-failure/1', at: now(), attempt: attempt.path, attempt_id: attempt.settings.id,
       strategy_id: attempt.settings.strategy_id, receipt_identity: attempt.receiptIdentity, input_identity: attempt.settings.input_identity,
       condition_digest: digest(condition(attempt.settings)), campaign_owner: owner, operation: active, invocation, error,
-      phase: active.phase, message: error.message, interrupted, interrupted_before_worker: interruptedBeforeWorker, recorded_by: identity(), evidence: {path: sourcePath, sha256: sha256Bytes(fs.readFileSync(sourcePath))}};
+      phase: active.phase, message: error.message, interrupted, interrupted_before_worker: interruptedBeforeWorker, recorded_by: identity(), evidence: evidenceReference};
+    failure.artifacts = originalArtifacts ?? preserveFailureArtifacts(attempt.path, active);
     const filename = path.join(attempt.path, 'failure.json');
     if (fs.existsSync(filename)) {
       const previous = loadRecord(filename);
@@ -619,7 +754,8 @@ export async function render(strategyPath: string, output: string, options: Rend
   if (snapshot.observed_architecture !== architecture) gate('upstream_architecture_mismatch', 'Frozen binary dependencies were prepared for a different observed architecture.', [sourcePath]);
   const profile = asRecord(strategy.profile, 'profile');
   const modules = arrayValue(profile.modules ?? [], 'ST modules');
-  if (profile.requires_model_adapter && modules.length === 0 && !['qwen3_vl', 'kanana2vec'].includes(String(profile.model_type))) gate('model_adapter_required', stringValue(profile.requires_model_adapter), [strategyPath]);
+  const support = runtimeSupport(strategy);
+  if (support.status === 'adapter_required') gate('model_adapter_required', support.reason, [strategyPath]);
   const selected = selectPlatform(manifest, stringValue(strategy.device), snapshot.platforms);
   if (selected.status === 'adapter_required') gate('platform_adapter_required', stringValue(selected.reason), [sourcePath]);
   let engine = options.engine ?? (selected.tei_image ? 'tei' : 'sentence-transformers');
@@ -673,16 +809,9 @@ export async function render(strategyPath: string, output: string, options: Rend
     };
     if (owner) cfg.campaign_owner = owner;
     cfg.harness_source = harnessSource();
-    const dependencies = asRecord(snapshot.dependency_locks, 'frozen dependency locks');
-    const dependencyLocks: JsonObject = {};
-    for (const role of engine === 'tei' ? ['gateway'] : ['backend']) {
-      const key = role === 'gateway' ? 'gateway' : stringValue(platform.id);
-      const lock = asRecord(dependencies[key], 'engine dependency lock');
-      const filename = `requirements.${role}.txt`;
-      fs.writeFileSync(path.join(directory, filename), stringValue(lock.content));
-      dependencyLocks[role] = {file: filename, sha256: lock.sha256, source: lock.path};
-    }
-    cfg.dependency_locks = dependencyLocks;
+    const assets = nativeAssets(cfg, snapshot, options.recipes, path.join(directory, 'runtime'));
+    for (const [filename, content] of Object.entries(assets.dependencies)) fs.writeFileSync(path.join(directory, filename), stringValue(content));
+    cfg.dependency_locks = assets.dependencyLocks;
     const localConfig = loadRecord(path.join(stringValue(strategy.model_path), 'config.json'));
     if (engine === 'tei' && profile.model_type === 'nomic_bert' && !localConfig.max_position_embeddings && typeof localConfig.n_positions === 'number' && Number.isSafeInteger(localConfig.n_positions) && localConfig.n_positions >= positiveInteger(strategy.context_window, 'context window')) {
       cfg.model_config_overrides = {max_position_embeddings: localConfig.n_positions};
@@ -692,23 +821,8 @@ export async function render(strategyPath: string, output: string, options: Rend
       cfg.model_config_overrides = {max_position_embeddings: strategy.context_window};
       cfg.model_config_override_reason = 'Align router capacity to approved model-card context; preserve weights and RoPE parameters.';
     }
-    const native = nativeRecipes(cfg, snapshot);
-    const recipes = recordClone(native);
-    const snapshots: JsonObject = {};
-    for (const [name, value] of Object.entries(options.recipes ?? {})) {
-      if (!RECIPE_NAMES.has(name) || (name === 'Dockerfile.gateway' && engine !== 'tei')) gate('unsupported_recipe', `Recipe ${name} is not supported by this engine.`);
-      const recipe = asRecord(value, 'declared recipe');
-      const content = stringValue(recipe.content, 'recipe content');
-      if (recipe.digest !== digest(content)) gate('recipe_snapshot_changed', 'Declared recipe content does not match its digest.');
-      recipes[name] = content;
-      snapshots[name] = recipe;
-    }
-    cfg.recipe_snapshots = snapshots;
-    for (const [name, value] of Object.entries(recipes)) {
-      const content = stringValue(value, name);
-      validateRecipe(content, snapshot, stringValue(native[name], 'native recipe'));
-      fs.writeFileSync(path.join(directory, name), content);
-    }
+    cfg.recipe_snapshots = assets.recipeSnapshots;
+    for (const [name, content] of Object.entries(assets.recipes)) fs.writeFileSync(path.join(directory, name), stringValue(content));
     cfg.compatibility_key = currentCompatibility(directory, cfg);
     cfg.previous_compatible_pass = findCompatiblePass(output, stringValue(cfg.compatibility_key));
     assertRecoveryLink(cfg, options.recovery);
@@ -822,6 +936,7 @@ function retainFailure(attempt: CheckedAttempt, phase: string, error: unknown): 
 }
 
 function buildRecipe(attemptPath: string, filename: string): string {
+  if (filename === 'Dockerfile') return digest(backendBuildInputs(attemptPath)).slice(0, 16);
   return digest({dockerfile: fs.readFileSync(path.join(attemptPath, filename), 'utf8'), runtime: textFiles(path.join(attemptPath, 'runtime'), (name) => name.endsWith('.py')), dependencies: textFiles(attemptPath, (name) => name.startsWith('requirements.') && name.endsWith('.txt'))}).slice(0, 16);
 }
 

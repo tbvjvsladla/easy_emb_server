@@ -21,13 +21,15 @@ flowchart LR
 |---|---|---|
 | 실제 사람의 장치 → 토큰 → 차원 선택 | `tools/embedding/models.ts` | 승인 원문 줄·해시·선택값, 모델 fingerprint, manifest snapshot 대조. 모델/범위 변경은 HITL, 무결성 오류는 복구 |
 | 환경 적용성 | `tools/embedding/hardware.ts` | 현재 호스트와 승인 당시의 구조·실행 환경·선택 장치 대조. 미관측/실패를 지원으로 추정하지 않음 |
-| 입력 고정 | `tools/embedding/upstream.ts`, `attempts.ts` | 공식 최신 안정 릴리스 commit, 이미지 digest, 해시가 있는 의존성 lock, 실제 recipe/runtime/정책/스킬을 attempt에 연결 |
+| 입력 고정 | `tools/embedding/upstream.ts`, `attempts.ts` | 공식 최신 안정 릴리스 commit, 이미지 digest, 실제 설치 URL·공식 인덱스·의존성 hash lock, recipe/runtime/정책/스킬을 attempt에 연결 |
 | 단일 실행 소유자 | `tools/embedding/processes.ts`, `campaign.ts` | host → campaign → attempt 실행 lease, boot/start/PID, checkpoint active phase 대조. 하위 실제 명령이 lease를 상속 |
-| 실패 후 유한 복구 | `tools/embedding/attempts.ts`, `campaign.ts` | 실패·가설·실제 조건 변경 또는 새 관측 요구. attempt/시간 한도 안에서만 재시도 |
+| 실패 후 유한 복구 | `tools/embedding/attempts.ts`, `recovery.ts`, `campaign.ts` | 실제 실패와 승인 범위·렌더 입력·남은 한도로 복구 후보 판별. 남은 같은 장치 ST 경로를 근거 없이 차단 처리하지 않음 |
 | 현재 증거의 PASS | `tools/embedding/bench.ts` | 같은 attempt의 기능검사·요청 회계·실측·사후 health와 컨테이너 정체성 검증. mock/과거 PASS는 새 PASS로 채택하지 않음 |
 | 평가 조건 보존 | `tools/campaign_e2e.ts` | 소스·정책·upstream과 그룹별 조건 고정, 실제 Codex 세션의 model/effort 및 도구 호출 증거 대조 |
 
 서빙 HITL은 실행 권한 승인과 별개다. `approve`에 임의의 문자열을 넣거나 도구 출력·에이전트 문장을 사람의 답으로 바꾸지 않는다. 새 승인은 실제 Codex session 저장소의 session ID·파일명·사용자 원문 줄을 검사한다. 기존 실제 영수증은 `config/legacy-approvals.json`에 고정한 원래 43개의 ID·digest·승인 원문 해시와 범위를 대조한다. 새로 만든 schema-1 파일을 과거 승인으로 받아들이지 않는다. 파일 해시는 보존 무결성을 확인하며 동일 사용자에 의한 의도적 파일 위조까지 인증하는 보안 장치는 아니다.
+
+새 upstream 준비는 resolver 원문과 공식 PyTorch wheel index를 함께 보존한다. PyTorch 인덱스에서 해석한 패키지는 원래 버전·해시와 대상 Python/플랫폼에 맞는 유일한 공식 wheel URL로 고정하고, 나머지는 PyPI에서 설치한다. 설치 파일은 보존한 원문과 index 근거에서 재구성해 대조한다. 후보가 없거나 모호하면 새 어댑터 검토가 필요하며 임의 wheel이나 해시 없는 설치로 이어가지 않는다.
 
 ## 조절할 수 있는 값
 
@@ -38,6 +40,10 @@ flowchart LR
 stop/capture는 복구 중 소스나 모델 파일이 바뀌었어도 원래 승인·설정·자산 ID·이미지·labels·실행 lease를 대조해 소유 자산을 정리할 수 있다. 이 제한된 정리 경로는 build/serve/bench의 현재 입력 검사를 우회하지 않는다.
 
 긴 실행은 [캠페인 규약](../campaigns/README.md)에 따라 status → step/run으로 재개한다. checkpoint와 실제 프로세스·컨테이너가 불일치하면 기록된 원인을 조사한다. 살아 있는 작업을 덮어쓰거나 상태 파일을 직접 고치지 않는다. 오류 JSON의 `code`, `evidence`, `next_action`, `retryable`과 worker 로그를 사용한다.
+
+실패한 셀의 status는 실제 renderer와 같은 어댑터·dtype·설치 입력을 사용해 `recovery_options`를 제시한다. `campaign resolve`는 승인된 장치에서 사용 가능한 ST 복구 후보가 남으면 `RECOVERY_REVIEW_REQUIRED`로 차단한다. 실제 재시도 실패, 동일한 고정 빌드 입력의 입증된 장애, 지원 부재 또는 복구 한도 소진을 근거로 판정하며 모델 이름이나 과거 PASS 목록으로 성공 경로를 정하지 않는다.
+
+차단 보고는 현재 실패 worker와 원래 operation·셀·승인·모델·upstream을 묶은 불변 handoff를 남긴다. 과거 자료는 별도 배경 근거로 보존한다. 최종 평가에서 허용하는 BLOCKED도 현재 평가의 실제 실패와 그 시점의 복구 검토를 검증해야 한다. 과거 handoff를 읽을 수 있다는 사실은 새 평가의 차단 근거가 되지 않는다.
 
 ## 개발과 평가
 

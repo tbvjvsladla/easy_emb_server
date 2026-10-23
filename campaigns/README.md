@@ -12,6 +12,7 @@ node tools/embctl.ts campaign step --campaign output/campaigns/<id>
 ```
 
 `status`는 목표·현재 셀/attempt·승인·미결 질문·실행 소유권·다음 작업·여정 끝부분을 JSON으로 반환한다.
+실패 후에는 `recovery_options`에 같은 승인 장치의 복구 후보와 실제 재시도 옵션·차단 근거를 포함한다.
 `step`은 실제 소유권과 상태를 확인하고 유한 단계 하나를 시작하거나 살아 있는 작업을 관측한다.
 대화 기억이나 이전 호출의 마지막 문장을 정본으로 삼지 않는다.
 
@@ -67,9 +68,14 @@ node tools/embctl.ts campaign answer --campaign output/campaigns/<id> --answer /
 복구에는 직전 실패·확인할 가설·변경을 연결한다. 새 빌드 시도는 새 attempt이고, 살아 있는 명령을
 중복 실행하지 않는다. TEI 실패 뒤 같은 승인 장치의 ST로 전환할 때도 원문 실패 근거를 남긴다.
 
-사전 판정이나 자산 생성이 실패해 아직 attempt가 없어도 `checkpoint.recovery`와
-`workers/prepare-*.json`에 원인을 보존한다. 다음 호출은 같은 준비를 자동 반복하지 않는다.
+사전 판정이나 자산 생성이 실패해 아직 attempt가 없어도 해당 셀의 `recovery`와
+`workers/<operation-id>.json`에 원인을 보존한다. 다음 호출은 같은 준비를 자동 반복하지 않는다.
 근거 있는 수정은 `retry`로 재개하고, 미해결은 증거와 재개 조건을 남겨 `resolve`한다.
+
+지원되는 같은 장치 ST 복구 후보가 남으면 `resolve`는 `RECOVERY_REVIEW_REQUIRED`와 재시도 옵션을 반환한다.
+실제 실패나 같은 고정 빌드 입력의 입증된 장애, 지원 부재, 복구 한도 소진을 판별한 뒤 차단을 기록한다.
+`unresolved/`의 새 handoff는 현재 실패 worker·원래 operation·승인·모델·upstream과 복구 검토를 묶는다.
+`--evidence`로 제공한 과거 자료는 배경 근거로 별도 보존하며 현재 실패를 대신하지 않는다.
 
 ```bash
 node tools/embctl.ts campaign retry --campaign output/campaigns/<id> --cell <cell> --reason '<실패>' --hypothesis '<가설>' --change '<변경>' --observation /path/to/new-evidence

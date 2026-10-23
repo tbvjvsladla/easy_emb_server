@@ -13,6 +13,8 @@ const RELEASES = [
 ];
 const HASH_PATTERN = /^[a-f0-9]{64}$/;
 const COMMIT_PATTERN = /^[a-f0-9]{40}$/;
+const PYPI_INDEX = 'https://pypi.org/simple';
+const DEPENDENCY_CONTRACT = 'pypi-with-frozen-pytorch-wheels/1';
 
 /** Frozen official source and distribution identities; snake_case preserves disk contracts. */
 export interface ReleaseSnapshot extends JsonObject {
@@ -321,8 +323,9 @@ async function resolveDependencyLocks(versions: JsonObject, platforms: JsonObjec
     }
     const inputPath = path.join(directory, `${key}.in`);
     const outputPath = path.join(directory, `${key}.txt`);
+    const rawPath = path.join(directory, `${key}.uv.txt`);
     fs.writeFileSync(inputPath, requirements.join('\n') + '\n');
-    const argv = ['uv', 'pip', 'compile', '--cache-dir', path.join(root, 'uv-cache'), '--only-binary', ':all:', '--no-python-downloads', '--python-version', '3.12', '--python-platform', pythonPlatform(architecture), '--default-index', 'https://pypi.org/simple', '--prerelease', 'disallow', '--generate-hashes', '--emit-index-url', '--emit-index-annotation', '--no-header', '--output-file', outputPath];
+    const argv = ['uv', 'pip', 'compile', '--cache-dir', path.join(root, 'uv-cache'), '--only-binary', ':all:', '--no-python-downloads', '--python-version', '3.12', '--python-platform', pythonPlatform(architecture), '--default-index', 'https://pypi.org/simple', '--prerelease', 'disallow', '--generate-hashes', '--emit-index-url', '--emit-index-annotation', '--no-header', '--output-file', rawPath];
     if (typeof platform.torch_index === 'string') {
       officialUrl(platform.torch_index, ['download.pytorch.org'], 'torch dependency index');
       const backend = new URL(platform.torch_index).pathname.split('/').findLast((part) => part.length > 0);
@@ -332,10 +335,28 @@ async function resolveDependencyLocks(versions: JsonObject, platforms: JsonObjec
     argv.push(inputPath);
     const result = await runCommand(argv, {timeoutSeconds: Math.max(timeoutSeconds, 600), effect: 'mutate', logPath: path.join(directory, `${key}.log`)});
     if (result.code !== 0 || result.timedOut || result.spawnError) fail('upstream_dependency_resolution', `Binary dependency freezing failed for ${key}: ${result.stderr || result.spawnError?.message || result.stdout}`, [path.join(directory, `${key}.log`)]);
-    const content = fs.readFileSync(outputPath, 'utf8');
+    const raw = fs.readFileSync(rawPath, 'utf8');
+    const torchIndex = platform.torch_index === undefined ? undefined : stringValue(platform.torch_index);
+    const indexes = new Map<string, DependencyIndexEvidence>();
+    const indexPaths = new Map<string, string>();
+    for (const requirement of backendRequirements(raw, torchIndex)) {
+      const name = dependencyName(requirement.name);
+      const address = `${dependencyIndexUrl(stringValue(torchIndex))}/${name}/`;
+      const indexPath = path.join(directory, `${key}.${name}.index.html`);
+      const content = await command(['curl', '--fail', '--silent', '--show-error', '--proto', '=https', '--connect-timeout', '15', '--max-time', String(timeoutSeconds), address], timeoutSeconds + 5);
+      fs.writeFileSync(indexPath, content, {flag: 'wx'});
+      indexes.set(name, {url: address, content});
+      indexPaths.set(name, indexPath);
+    }
+    const frozen = materializeDependencyWheels(raw, {architecture, torchIndex, indexes});
+    const content = frozen.content;
+    fs.writeFileSync(outputPath, content);
     if (!content.includes('--hash=sha256:')) fail('upstream_dependency_hashes', 'Resolver output lacks required distribution hashes.', [outputPath]);
-    validateDependencyUrls(content);
-    locks[key] = {path: outputPath, sha256: sha256(content), content, resolver, input_path: inputPath, input_sha256: sha256(requirements.join('\n') + '\n'), source: 'Official PyPI and selected official PyTorch indexes; binary-only resolution, no runtime build.', python_version: '3.12', python_platform: pythonPlatform(architecture)};
+    locks[key] = {path: outputPath, sha256: sha256(content), content, resolver, input_path: inputPath, input_sha256: sha256(requirements.join('\n') + '\n'),
+      installation_contract: DEPENDENCY_CONTRACT, raw_resolution: {path: rawPath, sha256: sha256(raw)},
+      pytorch_wheels: frozen.wheels.map((wheel) => ({...wheel, index_path: stringValue(indexPaths.get(wheel.name))})),
+      source: 'Official PyPI primary only; exact official PyTorch wheel URLs selected from the original uv version/hash set and retained index evidence.',
+      python_version: '3.12', python_platform: pythonPlatform(architecture), architecture};
   }
   return locks;
 }
@@ -343,6 +364,286 @@ async function resolveDependencyLocks(versions: JsonObject, platforms: JsonObjec
 function validateDependencyUrls(content: string): void {
   for (const match of content.matchAll(/https?:\/\/[^\s\\]+/g)) {
     officialUrl(match[0], ['pypi.org', 'files.pythonhosted.org', 'download.pytorch.org', 'download-r2.pytorch.org'], 'dependency source');
+  }
+}
+
+interface DependencyRequirement {
+  name: string;
+  version?: string;
+  specifier: string;
+  directUrl?: string;
+  localVersion: boolean;
+  indexes: string[];
+  hashes: Set<string>;
+}
+
+interface DependencySources {
+  primaryIndex: string;
+  extraIndexes: Set<string>;
+  effectiveExtraIndexes: Set<string>;
+  requirements: DependencyRequirement[];
+}
+
+function dependencyRequirement(line: string): DependencyRequirement | undefined {
+  const match = /^([a-zA-Z0-9][a-zA-Z0-9._-]*)(?:\[[a-zA-Z0-9,._-]+\])?\s*(?:==([a-zA-Z0-9][a-zA-Z0-9.!+_-]*)|@\s*(https?:\/\/[^\s\\]+))/u.exec(line);
+  if (!match?.[1]) return undefined;
+  // Target-specific uv output has already evaluated markers. Accept only its
+  // hash/continuation suffix, not additional pip instructions after a valid pin.
+  if (!/^(?:\s+--hash=sha256:[a-f0-9]{64})*(?:\s*\\)?$/u.test(line.slice(match[0].length))) {
+    fail('upstream_dependency_install_contract', `Unsupported suffix on the pinned requirement for ${match[1]}.`);
+  }
+  return {name: match[1], specifier: match[0], localVersion: match[2]?.includes('+') ?? false, indexes: [], hashes: new Set<string>(),
+    ...(match[2] === undefined ? {} : {version: match[2]}),
+    ...(match[3] === undefined ? {} : {directUrl: match[3]})};
+}
+
+function dependencyIndexUrl(address: string): string {
+  const url = new URL(officialUrl(address, ['pypi.org', 'download.pytorch.org'], 'dependency index'));
+  const pathname = url.pathname.replace(/\/+$/u, '');
+  if (url.search || url.hash || url.port || (url.hostname === 'pypi.org' ? pathname !== '/simple' : !/^\/whl\/(?:cpu|cu\d+|rocm\d+(?:\.\d+)*)$/u.test(pathname))) {
+    fail('upstream_dependency_index', 'Dependency indexes must be the official PyPI index or an exact PyTorch backend index.');
+  }
+  return `${url.origin}${pathname}`;
+}
+
+function dependencySources(content: string): DependencySources {
+  let primaryIndex: string | undefined;
+  const extraIndexes = new Set<string>();
+  const effectiveExtraIndexes = new Set<string>();
+  const requirements: DependencyRequirement[] = [];
+  let current: DependencyRequirement | undefined;
+  for (const rawLine of content.split('\n')) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const annotation = /^# from (\S+)$/u.exec(line);
+    if (annotation?.[1]) {
+      if (!current) fail('upstream_dependency_source', 'A dependency source annotation has no package.');
+      current.indexes.push(dependencyIndexUrl(annotation[1]));
+    }
+    if (line.startsWith('#')) continue;
+    const directive = /^(--index-url|--extra-index-url)(?:=|\s+)(\S+)$/u.exec(line);
+    if (directive?.[1] && directive[2]) {
+      const address = dependencyIndexUrl(directive[2]);
+      if (directive[1] === '--index-url') {
+        if (primaryIndex !== undefined) fail('upstream_dependency_index', 'Dependency locks must declare at most one primary index.');
+        primaryIndex = address;
+        // A later --index-url discards earlier extra indexes in native pip.
+        // https://github.com/pypa/pip/blob/25.0.1/src/pip/_internal/req/req_file.py#L234-L237
+        effectiveExtraIndexes.clear();
+      } else {
+        extraIndexes.add(address);
+        effectiveExtraIndexes.add(address);
+      }
+      continue;
+    }
+    const requirement = dependencyRequirement(line);
+    if (requirement) {
+      current = requirement;
+      requirements.push(current);
+    } else if (!/^--hash=sha256:[a-f0-9]{64}(?:\s*\\)?$/u.test(line)) {
+      fail('upstream_dependency_install_contract', `Unsupported dependency install instruction: ${line}`);
+    }
+    if (!current) fail('upstream_dependency_hashes', 'A dependency hash has no package.');
+    for (const hash of line.matchAll(/--hash=([^\s\\]+)/gu)) {
+      const value = hash[1];
+      if (!value?.startsWith('sha256:') || !HASH_PATTERN.test(value.slice(7))) fail('upstream_dependency_hashes', 'Every dependency hash must be a full SHA256.');
+      current.hashes.add(value.slice(7));
+    }
+  }
+  if (requirements.length === 0) fail('upstream_dependency_install_contract', 'Dependency lock contains no pinned packages.');
+  return {primaryIndex: primaryIndex ?? PYPI_INDEX, extraIndexes, effectiveExtraIndexes, requirements};
+}
+
+function validateDependencyIndexes(sources: DependencySources, expectedTorchIndex: string | undefined): void {
+  if (sources.primaryIndex !== PYPI_INDEX || [...sources.extraIndexes].some((index) => index !== expectedTorchIndex)) {
+    fail('upstream_dependency_backend_mismatch', 'Dependency installer indexes differ from the frozen PyPI and selected PyTorch backend.');
+  }
+}
+
+/** Checks pip sources; delegated URLs must already be proved against their frozen backend index. */
+export function validateDependencyInstallSources(content: string, torchIndex?: string, verifiedWheelUrls: ReadonlySet<string> = new Set()): void {
+  validateDependencyUrls(content);
+  const expectedTorchIndex = torchIndex === undefined ? undefined : dependencyIndexUrl(torchIndex);
+  const sources = dependencySources(content);
+  validateDependencyIndexes(sources, expectedTorchIndex);
+  if ([...sources.extraIndexes].some((index) => !sources.effectiveExtraIndexes.has(index))) {
+    fail('upstream_dependency_index_order', 'The primary index discards an earlier extra index; declare PyPI before the selected PyTorch index.');
+  }
+  const effectiveIndexes = new Set([sources.primaryIndex, ...sources.effectiveExtraIndexes]);
+  for (const requirement of sources.requirements) {
+    if (requirement.hashes.size === 0) fail('upstream_dependency_hashes', `Missing frozen artifact hashes for ${requirement.name}.`);
+    if (requirement.directUrl) {
+      const url = new URL(officialUrl(requirement.directUrl, ['files.pythonhosted.org', 'download.pytorch.org', 'download-r2.pytorch.org'], 'dependency artifact'));
+      if (url.hostname !== 'files.pythonhosted.org' && !verifiedWheelUrls.has(requirement.directUrl) &&
+          (!expectedTorchIndex || !url.pathname.startsWith(`${new URL(expectedTorchIndex).pathname}/`))) {
+        fail('upstream_dependency_backend_mismatch', `Direct wheel for ${requirement.name} differs from the selected PyTorch backend.`);
+      }
+      if (url.hash && (!url.hash.startsWith('#sha256=') || !requirement.hashes.has(url.hash.slice(8)))) {
+        fail('upstream_dependency_hashes', `Direct URL and requirement SHA256 disagree for ${requirement.name}.`);
+      }
+    }
+    for (const index of requirement.indexes) {
+      if (index !== PYPI_INDEX && index !== expectedTorchIndex) fail('upstream_dependency_backend_mismatch', `${requirement.name} was resolved from a different PyTorch backend.`);
+      if (!requirement.directUrl && !effectiveIndexes.has(index)) fail('upstream_dependency_index_missing', `Native pip cannot reach the frozen source of ${requirement.name}: ${index}`);
+    }
+    if (requirement.localVersion && !requirement.directUrl && (!expectedTorchIndex || !effectiveIndexes.has(expectedTorchIndex))) {
+      fail('upstream_dependency_index_missing', `Local backend version of ${requirement.name} requires the selected PyTorch index.`);
+    }
+  }
+}
+
+/** Emits PyPI then uv's implicit PyTorch index before hashing the pip installation lock. */
+export function materializeDependencyIndexes(content: string, torchIndex?: string): string {
+  const sources = dependencySources(content);
+  const expectedTorchIndex = torchIndex === undefined ? undefined : dependencyIndexUrl(torchIndex);
+  validateDependencyIndexes(sources, expectedTorchIndex);
+  const indexes = [`--index-url ${PYPI_INDEX}`];
+  if (expectedTorchIndex) indexes.push(`--extra-index-url ${expectedTorchIndex}`);
+  const body = content.split('\n').filter((line) => !/^(--index-url|--extra-index-url)(?:=|\s+)\S+$/u.test(line.trim())).join('\n');
+  const result = `${indexes.join('\n')}\n${body}`;
+  validateDependencyInstallSources(result, expectedTorchIndex);
+  return result;
+}
+
+/** Carries an official package index response for deterministic wheel selection. */
+export interface DependencyIndexEvidence {
+  url: string;
+  content: string;
+}
+
+/** Selects only the frozen resolver's PyTorch packages for this CPython/Linux target. */
+export interface DependencyWheelOptions {
+  architecture: string;
+  torchIndex?: string;
+  indexes: ReadonlyMap<string, DependencyIndexEvidence>;
+}
+
+/** Retains the exact official href, resolver version/hash and target wheel tags. */
+export interface DependencyWheel extends JsonObject {
+  name: string;
+  version: string;
+  url: string;
+  sha256: string;
+  filename: string;
+  python_tag: string;
+  abi_tag: string;
+  platform_tag: string;
+  index_url: string;
+  index_sha256: string;
+  index_href: string;
+}
+
+function dependencyName(name: string): string {
+  return name.toLowerCase().replace(/[-_.]+/gu, '-');
+}
+
+function backendRequirements(content: string, torchIndex: string | undefined): DependencyRequirement[] {
+  validateDependencyUrls(content);
+  const sources = dependencySources(content);
+  const expected = torchIndex === undefined ? undefined : dependencyIndexUrl(torchIndex);
+  validateDependencyIndexes(sources, expected);
+  const names = new Set<string>();
+  const selected: DependencyRequirement[] = [];
+  for (const requirement of sources.requirements) {
+    const name = dependencyName(requirement.name);
+    if (names.has(name)) fail('upstream_dependency_source', `Duplicate resolved package: ${name}`);
+    names.add(name);
+    if (!requirement.hashes.size) fail('upstream_dependency_hashes', `Missing frozen artifact hashes for ${name}.`);
+    if (requirement.directUrl) continue;
+    const indexes = [...new Set(requirement.indexes)];
+    if (indexes.length !== 1) fail('upstream_dependency_source', `The original uv output must identify exactly one resolved index for ${name}.`);
+    const index = indexes[0];
+    if (index !== PYPI_INDEX && index !== expected) fail('upstream_dependency_backend_mismatch', `${name} was resolved from another backend.`);
+    if (requirement.localVersion && index === PYPI_INDEX) fail('upstream_dependency_source', `Local backend version of ${name} lacks its PyTorch source annotation.`);
+    if (index !== PYPI_INDEX) selected.push(requirement);
+  }
+  return selected;
+}
+
+function linuxWheelPlatform(tag: string, architecture: string): boolean {
+  const aliases: Record<string, string> = {AMD64: 'x86_64', arm64: 'aarch64'};
+  const target = aliases[architecture] ?? architecture;
+  pythonPlatform(architecture);
+  return tag.split('.').every((part) => {
+    const match = /^(linux|manylinux1|manylinux2010|manylinux2014|manylinux_2_\d+)_(.+)$/u.exec(part);
+    return match?.[2] === target;
+  });
+}
+
+function selectDependencyWheel(requirement: DependencyRequirement, evidence: DependencyIndexEvidence, architecture: string, torchIndex: string): DependencyWheel {
+  const name = dependencyName(requirement.name);
+  const version = stringValue(requirement.version, `resolved ${name} version`);
+  const indexUrl = `${dependencyIndexUrl(torchIndex)}/${name}/`;
+  if (evidence.url !== indexUrl) fail('upstream_dependency_wheel_source', `Wheel evidence belongs to another backend or package: ${name}`);
+  const candidates = new Map<string, DependencyWheel>();
+  for (const anchor of evidence.content.matchAll(/<a\b([^>]*)>/giu)) {
+    const attributes = anchor[1] ?? '';
+    if (/\bdata-yanked(?:\s|=|$)/iu.test(attributes)) continue;
+    const href = /\bhref=["']([^"']+)["']/iu.exec(attributes)?.[1];
+    if (!href) continue;
+    const url = new URL(href.replaceAll('&amp;', '&'), indexUrl);
+    const filename = decodeURIComponent(url.pathname.split('/').at(-1) ?? '');
+    const wheel = /^([^-]+)-([^-]+)-(?:\d[^-]*-)?([^-]+)-([^-]+)-([^-]+)\.whl$/u.exec(filename);
+    if (!wheel || dependencyName(wheel[1] ?? '') !== name || wheel[2] !== version || wheel[3] !== 'cp312' || wheel[4] !== 'cp312' || !wheel[5] || !linuxWheelPlatform(wheel[5], architecture)) continue;
+    if (url.protocol !== 'https:' || !['download.pytorch.org', 'download-r2.pytorch.org'].includes(url.hostname) || url.username || url.password || url.port || url.search) {
+      fail('upstream_dependency_wheel_source', `Selected ${name} wheel is not an exact official PyTorch HTTPS artifact.`);
+    }
+    const hash = url.hash.startsWith('#sha256=') ? url.hash.slice(8) : '';
+    if (!HASH_PATTERN.test(hash) || !requirement.hashes.has(hash)) continue;
+    candidates.set(url.href, {name, version, url: url.href, sha256: hash, filename, python_tag: wheel[3], abi_tag: wheel[4], platform_tag: wheel[5],
+      index_url: indexUrl, index_sha256: sha256(evidence.content), index_href: href});
+  }
+  if (candidates.size !== 1) fail('upstream_dependency_wheel_ambiguous', `Expected one official locked ${name} ${version} CPython 3.12 Linux/${architecture} wheel; found ${candidates.size}.`);
+  const selected = candidates.values().next().value;
+  if (!selected) fail('upstream_dependency_wheel_ambiguous', `No supported wheel for ${name}.`);
+  return selected;
+}
+
+/** Replaces only uv's selected PyTorch pins with exact wheels, retaining all package hashes and PyPI-only lookup. */
+export function materializeDependencyWheels(content: string, options: DependencyWheelOptions): {content: string; wheels: DependencyWheel[]} {
+  pythonPlatform(options.architecture);
+  const selected = backendRequirements(content, options.torchIndex);
+  const wheels = selected.map((requirement) => {
+    const evidence = options.indexes.get(dependencyName(requirement.name));
+    if (!evidence) fail('upstream_dependency_wheel_source', `Missing retained official index for ${requirement.name}.`);
+    return selectDependencyWheel(requirement, evidence, options.architecture, stringValue(options.torchIndex));
+  });
+  if (options.indexes.size !== wheels.length) fail('upstream_dependency_wheel_source', 'Wheel evidence contains packages that uv did not resolve from the selected PyTorch index.');
+  const byName = new Map(wheels.map((wheel) => [wheel.name, wheel]));
+  const body = content.split('\n').filter((line) => !/^(--index-url|--extra-index-url)(?:=|\s+)\S+$/u.test(line.trim())).map((line) => {
+    if (!line.trim() || line.trim().startsWith('#') || line.trim().startsWith('--hash=')) return line;
+    const requirement = dependencyRequirement(line.trim());
+    const wheel = requirement ? byName.get(dependencyName(requirement.name)) : undefined;
+    if (!requirement || !wheel) return line;
+    const name = requirement.specifier.slice(0, requirement.specifier.indexOf('==')).trimEnd();
+    return line.replace(requirement.specifier, `${name} @ ${wheel.url}`);
+  }).join('\n');
+  const result = `--index-url ${PYPI_INDEX}\n${body}`;
+  validateDependencyInstallSources(result, options.torchIndex, new Set(wheels.map((wheel) => wheel.url)));
+  return {content: result, wheels};
+}
+
+function validateDependencyWheelLock(lock: JsonObject, torchIndex: string | undefined, architecture: string): void {
+  if (lock.installation_contract !== DEPENDENCY_CONTRACT || lock.architecture !== architecture || lock.python_version !== '3.12' || lock.python_platform !== pythonPlatform(architecture)) {
+    fail('upstream_dependency_install_contract', 'Frozen dependency wheel target or installation contract changed.');
+  }
+  const raw = asRecord(lock.raw_resolution, 'original uv resolution');
+  const rawPath = stringValue(raw.path, 'original uv path');
+  const rawContent = fs.readFileSync(rawPath, 'utf8');
+  if (sha256(rawContent) !== raw.sha256) fail('upstream_dependencies_changed', 'Original uv resolution bytes changed.', [rawPath]);
+  const recorded = arrayValue(lock.pytorch_wheels, 'frozen PyTorch wheels').map((item) => asRecord(item));
+  const indexes = new Map<string, DependencyIndexEvidence>();
+  for (const wheel of recorded) {
+    const name = stringValue(wheel.name);
+    if (indexes.has(name)) fail('upstream_dependency_wheel_source', `Duplicate frozen wheel evidence for ${name}.`);
+    const filename = stringValue(wheel.index_path, 'official wheel index evidence');
+    const content = fs.readFileSync(filename, 'utf8');
+    if (sha256(content) !== wheel.index_sha256) fail('upstream_evidence_changed', 'Frozen official wheel index bytes changed.', [filename]);
+    indexes.set(name, {url: stringValue(wheel.index_url), content});
+  }
+  const frozen = materializeDependencyWheels(rawContent, {architecture, torchIndex, indexes});
+  if (frozen.content !== lock.content || digest(frozen.wheels) !== digest(recorded.map((wheel) => omitRecordKeys(wheel, ['index_path'])))) {
+    fail('upstream_dependency_wheel_binding', 'Installer bytes or exact wheel proof differ from the original uv pins and official indexes.');
   }
 }
 
@@ -391,11 +692,16 @@ export function validateFrozenSources(value: unknown): ReleaseSnapshot {
     }
   }
   const locks = asRecord(snapshot.dependency_locks, 'frozen transitive dependencies');
-  for (const item of Object.values(locks)) {
+  for (const [key, item] of Object.entries(locks)) {
     const lock = asRecord(item, 'dependency lock');
     const filename = stringValue(lock.path, 'dependency lock path');
     const content = stringValue(lock.content, 'dependency lock contents');
-    validateDependencyUrls(content);
+    const platform = snapshot.platforms.find((candidate) => candidate.id === key);
+    if (key !== 'gateway' && !platform) fail('upstream_dependency_platform', 'Dependency lock has no frozen platform.', [filename]);
+    const torchIndex = platform?.torch_index === undefined ? undefined : stringValue(platform.torch_index);
+    if (lock.installation_contract !== undefined || lock.raw_resolution !== undefined || lock.pytorch_wheels !== undefined) {
+      validateDependencyWheelLock(lock, torchIndex, stringValue(snapshot.observed_architecture));
+    } else validateDependencyInstallSources(content, torchIndex);
     if (sha256(content) !== lock.sha256 || sha256(fs.readFileSync(filename)) !== lock.sha256 || sha256(fs.readFileSync(stringValue(lock.input_path))) !== lock.input_sha256) fail('upstream_dependencies_changed', 'Frozen transitive dependency inputs or hashes changed.', [filename]);
   }
   return snapshot;

@@ -523,6 +523,7 @@ export async function validateGroupEvidence(context: EvaluationContext, base: st
     const cell = asRecord(cells[stringValue(spec.id)]);
     const attempt = optionalString(cell.attempt);
     const validation = attempt ? validateResult(attempt) : null;
+    let unresolvedValidation: campaign.UnresolvedEvidenceValidation | null = null;
     const failures: string[] = [];
     if (cell.phase !== 'done' || !condition.allowed_outcomes.includes(stringValue(cell.outcome))) failures.push('required outcome not achieved');
     if (cell.outcome === 'PASS') {
@@ -536,16 +537,14 @@ export async function validateGroupEvidence(context: EvaluationContext, base: st
         attempts.add(attempt);
       }
     } else if (cell.outcome === 'BLOCKED') {
-      const unresolved = asRecord(cell.unresolved ?? {});
-      const evidence = optionalString(unresolved.evidence);
-      const workerEvidence = arrayValue(cell.evidence ?? []).map((item) => stringValue(item));
-      if (!optionalString(unresolved.reason)?.trim() || !optionalString(unresolved.resume_condition)?.trim() || !evidence || !fs.existsSync(evidence) ||
-          !fs.statSync(evidence).size || fs.statSync(evidence).mtimeMs < frozenAt || !workerEvidence.some((filename) => fs.existsSync(filename) && fs.statSync(filename).mtimeMs >= frozenAt)) {
-        failures.push('blocked condition lacks new evaluation evidence and actionable handoff');
-      }
+      unresolvedValidation = campaign.validateUnresolvedEvidence(base, stringValue(spec.id), {
+        notBefore: stringValue(context.frozen.frozen_at), evaluationId: stringValue(context.frozen.evaluation_id),
+        upstreamDigest: stringValue(asRecord(context.frozen.upstream_snapshot).digest), controlThreads});
+      if (!unresolvedValidation.valid || !unresolvedValidation.fresh || unresolvedValidation.kind !== 'fresh') failures.push(
+        `blocked condition lacks new evaluation evidence and actionable handoff: ${unresolvedValidation.reasons.join('; ')}`);
     }
     if (failures.length) reasons.push(`${condition.condition_id}: ${failures.join('; ')}`);
-    outcomes.push({condition_id: condition.condition_id, cell_id: spec.id, outcome: cell.outcome, attempt: attempt ?? null, validation, reasons: failures});
+    outcomes.push({condition_id: condition.condition_id, cell_id: spec.id, outcome: cell.outcome, attempt: attempt ?? null, validation, unresolved_validation: unresolvedValidation, reasons: failures});
   }
   const groupRoot = path.join(context.directory, 'groups');
   if (fs.existsSync(groupRoot)) {

@@ -5,11 +5,13 @@ import {randomUUID} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import {setTimeout as delay} from 'node:timers/promises';
 import {GateError, ROOT, absolutePath, arrayValue, asRecord, cloneJson, digest, integerValue,
-  load, loadRecord, now, numberValue, omitRecordKeys, optionalString, save, stringValue} from './common.ts';
+  load, loadRecord, now, numberValue, omitRecordKeys, optionalString, save, sha256Bytes, stringValue} from './common.ts';
 import type {JsonObject} from './common.ts';
 import * as models from './models.ts';
 import * as attempts from './attempts.ts';
 import * as bench from './bench.ts';
+import {assessRecovery} from './recovery.ts';
+import type {RecoveryInputs} from './recovery.ts';
 import {parseManifest} from './hardware.ts';
 import {LeaseBusyError, alive, assertPersistentExecutionEnvironment, executionLeasePaths, identity, inheritedLeaseBindings, observeProcess,
   runCommand, spawnDetached, withExecutionLease, withFileLease, withInheritedLeases} from './processes.ts';
@@ -67,6 +69,24 @@ export interface ResolveOptions {
   reason: string;
   evidence: string;
   resumeCondition: string;
+}
+
+/** Constrains fresh unresolved evidence to the actual evaluation and its verified callers. */
+export interface UnresolvedEvidenceOptions {
+  notBefore?: string;
+  evaluationId?: string;
+  upstreamDigest?: string;
+  controlThreads?: ReadonlySet<string>;
+}
+
+/** Keeps historical handoffs readable without treating them as fresh evaluation evidence. */
+export interface UnresolvedEvidenceValidation {
+  valid: boolean;
+  fresh: boolean;
+  kind: 'fresh' | 'legacy_read_only' | 'invalid';
+  reasons: string[];
+  evidence: string | null;
+  worker: string | null;
 }
 
 const SCHEMA = 'embedding-campaign-checkpoint/1';
@@ -211,12 +231,17 @@ function summary(base: string, state: CampaignState): JsonObject {
   else if (!cell) { taskState = state.report ? 'completed' : 'working'; nextAction = state.report ? 'none' : 'report'; }
   else if (cell.recovery) nextAction = 'diagnose-and-retry-or-resolve';
   const ownerObservation = state.active ? observeProcess(state.active.process) : null;
+  let recoveryOptions: JsonObject | null = null;
+  if (cell?.recovery && cell.strategy && !state.active) {
+    try { recoveryOptions = assessRecovery(recoveryInputs(base, state, cell, now())); }
+    catch (error: unknown) { recoveryOptions = {assessment_error: errorRecord(error)}; }
+  }
   return {schema: 'embedding-campaign-status/1', campaign: base, campaign_id: state.id,
     goal: state.declaration.goal, sequence: state.sequence, task_state: taskState,
     campaign_complete: Boolean(state.report), resumable: Boolean(cell) || orderedCells(state).some((entry) => entry.unresolved !== null),
     next_action: nextAction, current_cell: cellId,
     active: state.active ? {...state.active, owner_alive: ownerObservation?.state === 'unavailable' ? null : ownerObservation?.state === 'alive', owner_observation: ownerObservation} : null,
-    hitl: request, cells: orderedCells(state).map((entry) => ({id: entry.id, phase: entry.phase, outcome: entry.outcome,
+    hitl: request, recovery_options: recoveryOptions, cells: orderedCells(state).map((entry) => ({id: entry.id, phase: entry.phase, outcome: entry.outcome,
       strategy: entry.strategy, attempt: entry.attempt, recovery: entry.recovery, unresolved: entry.unresolved,
       condition_id: definition(state, entry.id).condition_id ?? entry.id, result_compatibility: resultCompatibility(entry)})),
     journey_tail: state.journey.slice(-4), report: state.report,
@@ -487,6 +512,28 @@ function errorRecord(error: unknown): JsonObject {
     ...(error instanceof GateError ? {evidence: error.evidence, next_action: error.nextAction, retryable: error.retryable} : {})};
 }
 
+function operationInputs(base: string, state: CampaignState, cell: CellState): JsonObject {
+  const checked = models.checkedStrategyForCleanup(stringValue(cell.strategy));
+  const build = asRecord(definition(state, cell.id).build);
+  const upstreamPath = absolutePath(optionalString(build.release_snapshot) ?? path.join(ROOT, 'output/host/upstream-lock.json'));
+  let upstream: JsonObject;
+  let evidenceKind = checked.strategy.evidence_kind === 'mock' || checked.manifest.evidence_kind === 'mock' ? 'mock' : 'measured';
+  try {
+    const raw = fs.readFileSync(upstreamPath);
+    const snapshot = loadRecord(upstreamPath);
+    upstream = {path: upstreamPath, digest: digest(snapshot), sha256: sha256Bytes(raw)};
+    if (snapshot.evidence_kind === 'mock') evidenceKind = 'mock';
+  } catch (error: unknown) {
+    upstream = {path: upstreamPath, error: errorRecord(error)};
+    if (evidenceKind !== 'mock') evidenceKind = 'unverified';
+  }
+  return {schema: 'embedding-campaign-operation-inputs/1', campaign_path: base, campaign_id: state.id,
+    declaration_digest: state.declaration_digest, evaluation_id: state.declaration.evaluation_id ?? null,
+    group: state.declaration.group ?? null, cell_id: cell.id, attempt: cell.attempt,
+    strategy_path: absolutePath(stringValue(cell.strategy)), strategy_id: checked.strategy.id, receipt_identity: checked.receiptIdentity,
+    model_fingerprint_digest: digest(checked.strategy.model_fingerprint), upstream, evidence_kind: evidenceKind};
+}
+
 function unstartedInvocation(state: CampaignState, active: JsonObject): JsonObject | null {
   if (active.process !== null) return null;
   const invocations = state.invocations.filter((entry) => entry.id === active.invocation_id);
@@ -502,6 +549,26 @@ function unstartedInvocation(state: CampaignState, active: JsonObject): JsonObje
   return invocation;
 }
 
+function preserveInterruption(filename: string, operation: JsonObject, observed: JsonObject | null, unstarted: boolean): JsonObject {
+  const error = {code: 'worker_interrupted', message: unstarted ? 'Coordinator ended after recording intent but before confirming a worker' : 'Worker ended before checkpoint completion'};
+  if (fs.existsSync(filename)) {
+    const previous = loadRecord(filename);
+    const finished = Date.parse(stringValue(previous.finished_at, 'interruption completion time'));
+    if (digest(previous.operation) !== digest(operation) || digest(previous.error) !== digest(error) || previous.interrupted !== true ||
+        (previous.interrupted_before_worker === true) !== unstarted || previous.result !== null ||
+        !Number.isFinite(finished) || finished < Date.parse(stringValue(operation.started_at))) {
+      throw new GateError('recovery_failure_evidence_changed', 'Preserved interruption evidence does not match this original operation.', {evidence: [filename]});
+    }
+    // A prior reconciler may have bound these exact bytes and then ended before
+    // the checkpoint commit. Its original timestamp and observations stay fixed.
+    return previous;
+  }
+  const record = {operation, finished_at: now(), observed, result: null, error, interrupted: true,
+    ...(unstarted ? {interrupted_before_worker: true} : {})};
+  save(filename, record);
+  return record;
+}
+
 /** Starts one finite phase or observes its live owner without duplicate effects. */
 export async function step(base: string): Promise<JsonObject> {
   return await transaction(base, async (canonical, state) => {
@@ -515,11 +582,11 @@ export async function step(base: string): Promise<JsonObject> {
             {evidence: [path.join(canonical, 'checkpoint.json')], nextAction: 'resume from the original execution environment', retryable: true});
           const old = state.active;
           const cell = cellState(state, stringValue(old.cell_id));
-          const observed = cell.attempt ? await observedResources(cell.attempt) : null;
+          const currentObserved = cell.attempt ? await observedResources(cell.attempt) : null;
           const evidence = path.join(canonical, 'workers', `${stringValue(old.operation_id)}.interrupted.json`);
-          const error = {code: 'worker_interrupted', message: unstarted ? 'Coordinator ended after recording intent but before confirming a worker' : 'Worker ended before checkpoint completion'};
-          save(evidence, {operation: old, finished_at: now(), observed, result: null, error, interrupted: true,
-            ...(unstarted ? {interrupted_before_worker: true} : {})});
+          const record = preserveInterruption(evidence, old, currentObserved, Boolean(unstarted));
+          const error = asRecord(record.error);
+          const observed = record.observed;
           if (cell.attempt) await attempts.recordCampaignFailure(cell.attempt, evidence, {interrupted: true, interruptedBeforeWorker: Boolean(unstarted)});
           cell.evidence.push(evidence);
           cell.recovery = {phase: old.phase, reason: error.message, error, evidence, operation: old, observed,
@@ -557,7 +624,7 @@ export async function step(base: string): Promise<JsonObject> {
         const invocationId = randomUUID();
         const log = path.join(canonical, 'workers', `${operationId}.log`);
         state.active = {operation_id: operationId, invocation_id: invocationId, cell_id: cellId,
-          phase: cell.phase, started_at: now(), process: null, log};
+          phase: cell.phase, started_at: now(), process: null, log, inputs: operationInputs(canonical, state, cell)};
         state.invocations.push({id: invocationId, caller: identity(), worker: null,
           codex_thread_id: process.env.CODEX_THREAD_ID ?? null, cell_id: cellId, attempt: cell.attempt, phase: cell.phase, started_at: now()});
         commit(canonical, state, 'phase_intent', state.active);
@@ -714,6 +781,24 @@ function recoveryPredecessor(cell: CellState): string | null {
   return cell.attempt ?? optionalString(asRecord(cell.next_recovery ?? {}).previous_attempt) ?? null;
 }
 
+function recoveryInputs(base: string, state: CampaignState, cell: CellState, asOf: string): RecoveryInputs {
+  const policy = asRecord(state.declaration.recovery ?? {max_attempts_per_cell: 8, max_elapsed_seconds_per_cell: 14_400});
+  const build = asRecord(definition(state, cell.id).build ?? {});
+  const boundary = evidenceTime(asOf, 'recovery assessment time');
+  const knownAttempts = (entry: CellState): string[] => entry.attempts
+    .filter((attempt) => evidenceTime(attempt.created_at, 'attempt creation') <= boundary)
+    .map((attempt) => absolutePath(stringValue(attempt.path)));
+  const decisions = recordArray(cell.recovery_history ?? [], 'recovery decisions')
+    .filter((decision) => evidenceTime(decision.at, 'recovery decision') <= boundary);
+  return {campaignPath: base, cellId: cell.id, evaluationId: optionalString(state.declaration.evaluation_id) ?? null,
+    declarationDigest: state.declaration_digest, strategyPath: stringValue(cell.strategy),
+    releaseSnapshotPath: absolutePath(optionalString(build.release_snapshot) ?? path.join(ROOT, 'output/host/upstream-lock.json')),
+    currentAttempt: recoveryPredecessor(cell), cellAttempts: knownAttempts(cell),
+    relatedAttempts: orderedCells(state).flatMap((entry) => knownAttempts(entry)), recipes: asRecord(build.recipes ?? {}),
+    budget: {maxAttempts: integerValue(policy.max_attempts_per_cell), maxElapsedSeconds: numberValue(policy.max_elapsed_seconds_per_cell),
+      startedAt: optionalString(cell.attempts[0]?.created_at) ?? null, recoveryDecisions: decisions.length}, asOf};
+}
+
 function checkRecoveryBudget(state: CampaignState, cell: CellState): void {
   const policy = asRecord(state.declaration.recovery ?? {max_attempts_per_cell: 8, max_elapsed_seconds_per_cell: 14_400});
   const history = recordArray(cell.recovery_history ?? [], 'recovery history');
@@ -775,6 +860,164 @@ export async function retry(base: string, cellId: string, options: RetryOptions)
   }));
 }
 
+function evidenceFile(filename: string): JsonObject {
+  const canonical = absolutePath(filename);
+  const info = fs.statSync(canonical);
+  if (!info.isFile() || info.size === 0) throw new GateError('UNRESOLVED_EVIDENCE', 'Unresolved evidence must be a nonempty regular file.', {evidence: [canonical]});
+  return {path: canonical, sha256: sha256Bytes(fs.readFileSync(canonical)), size: info.size};
+}
+
+function checkedEvidenceFile(value: unknown): {path: string; modified: number; value: JsonObject} {
+  const reference = asRecord(value, 'evidence reference');
+  const filename = stringValue(reference.path, 'evidence path');
+  const actual = evidenceFile(filename);
+  if (filename !== actual.path || reference.sha256 !== actual.sha256 || reference.size !== actual.size) {
+    throw new GateError('UNRESOLVED_EVIDENCE_CHANGED', 'Preserved unresolved evidence bytes or identity changed.', {evidence: [filename]});
+  }
+  return {path: filename, modified: fs.statSync(filename).mtimeMs, value: loadRecord(filename)};
+}
+
+function preserveContextEvidence(source: string, destination: string): JsonObject {
+  const original = evidenceFile(source);
+  const bytes = fs.readFileSync(stringValue(original.path));
+  if (sha256Bytes(bytes) !== original.sha256 || bytes.length !== original.size) throw new GateError('UNRESOLVED_EVIDENCE_CHANGED', 'Context changed while its original bytes were being captured.');
+  fs.mkdirSync(path.dirname(destination), {recursive: true});
+  fs.writeFileSync(destination, bytes, {flag: 'wx'});
+  return {path: destination, sha256: original.sha256, size: original.size,
+    origin_path: original.path, origin_sha256: original.sha256, origin_size: original.size};
+}
+
+function evidenceTime(value: unknown, label: string): number {
+  const parsed = Date.parse(stringValue(value, label));
+  if (!Number.isFinite(parsed)) throw new GateError('UNRESOLVED_EVIDENCE_TIME', `${label} is not a finite timestamp.`);
+  return parsed;
+}
+
+function failedWorker(base: string, state: CampaignState, cell: CellState, filename: string): {file: JsonObject; record: JsonObject; invocation: JsonObject} {
+  const file = evidenceFile(filename);
+  const record = loadRecord(stringValue(file.path));
+  const operation = asRecord(record.operation, 'failed worker operation');
+  const operationId = safeId(operation.operation_id);
+  const interrupted = record.interrupted === true;
+  const expected = path.join(base, 'workers', `${operationId}${interrupted ? '.interrupted' : ''}.json`);
+  if (file.path !== expected || !cell.evidence.includes(expected) || operation.cell_id !== cell.id) {
+    throw new GateError('UNRESOLVED_WORKER_OWNER', 'Current failed worker evidence must belong to this exact campaign cell.', {evidence: [filename]});
+  }
+  const invocations = state.invocations.filter((entry) => entry.id === operation.invocation_id);
+  const invocation = invocations[0];
+  const recovery = asRecord(cell.recovery ?? cell.unresolved?.recovery ?? {}, 'preserved failure');
+  const expectedAttempt = operation.inputs === undefined ? recoveryPredecessor(cell) : asRecord(operation.inputs).attempt;
+  if (invocations.length !== 1 || !invocation || invocation.cell_id !== cell.id || invocation.phase !== operation.phase ||
+      invocation.attempt !== expectedAttempt || invocation.phase_result !== (interrupted ? 'interrupted' : 'failed') ||
+      recovery.evidence !== filename || recovery.phase !== operation.phase || digest(recovery.error) !== digest(record.error) ||
+      !stringValue(asRecord(record.error).message).trim()) {
+    throw new GateError('UNRESOLVED_WORKER_FAILURE', 'The handoff must retain the actual current failed operation and its invocation.');
+  }
+  const intents = state.journey.filter((entry) => entry.event === 'phase_intent' && entry.operation_id === operationId);
+  const intent = intents[0];
+  const starts = state.journey.filter((entry) => entry.event === 'phase_started' && entry.operation_id === operationId);
+  const start = starts[0];
+  if (intents.length !== 1 || !intent || digest(omitRecordKeys(intent, ['sequence', 'at', 'event'])) !== digest({...operation, process: null})) {
+    throw new GateError('UNRESOLVED_WORKER_INTENT', 'The worker does not match the original durable operation intent.');
+  }
+  if (record.interrupted_before_worker === true) {
+    if (!interrupted || starts.length !== 0 || operation.process !== null || invocation.worker !== null) throw new GateError('UNRESOLVED_WORKER_START', 'Unstarted worker evidence has inconsistent execution ownership.');
+  } else if (starts.length !== 1 || !start || digest(omitRecordKeys(start, ['sequence', 'at', 'event'])) !== digest(operation) || digest(invocation.worker) !== digest(operation.process)) {
+    throw new GateError('UNRESOLVED_WORKER_START', 'Worker evidence lacks its matching durable process identity.');
+  }
+  const completions = state.journey.filter((entry) => interrupted
+    ? entry.event === 'interrupted_worker_reconciled' && entry.cell_id === cell.id && entry.evidence === expected
+    : entry.event === 'phase_finished' && entry.cell_id === cell.id && entry.operation_id === operationId);
+  const completion = completions[0];
+  if (completions.length !== 1 || !completion || (!interrupted && digest(completion.error) !== digest(record.error))) {
+    throw new GateError('UNRESOLVED_WORKER_COMPLETION', 'Worker failure is not the completed operation retained in the campaign journal.');
+  }
+  const started = evidenceTime(operation.started_at, 'worker start');
+  const finished = evidenceTime(record.finished_at, 'worker finish');
+  if (started < evidenceTime(state.created_at, 'campaign creation') || finished < started ||
+      evidenceTime(invocation.finished_at, 'invocation finish') < finished || evidenceTime(completion.at, 'journal completion') < finished) {
+    throw new GateError('UNRESOLVED_EVIDENCE_TIME', 'Worker failure predates its campaign or has inconsistent completion times.');
+  }
+  return {file, record, invocation};
+}
+
+/** Verifies immutable handoff, worker, receipt and fresh-evaluation bindings without changing historical files. */
+export function validateUnresolvedEvidence(base: string, cellId: string, options: UnresolvedEvidenceOptions = {}): UnresolvedEvidenceValidation {
+  const reasons: string[] = [];
+  let filename: string | null = null;
+  let workerPath: string | null = null;
+  try {
+    const canonical = absolutePath(base);
+    const state = readState(canonical);
+    const cell = cellState(state, cellId);
+    const unresolved = asRecord(cell.unresolved, 'unresolved handoff');
+    filename = stringValue(unresolved.evidence, 'unresolved evidence');
+    if (!stringValue(unresolved.reason).trim() || !stringValue(unresolved.resume_condition).trim()) throw new GateError('UNRESOLVED_HANDOFF', 'Unresolved outcome needs a current cause and actionable resume condition.');
+    if (unresolved.evidence_schema !== 'embedding-campaign-unresolved/1') {
+      evidenceFile(filename);
+      return {valid: true, fresh: false, kind: 'legacy_read_only', reasons: ['LEGACY_UNRESOLVED_EVIDENCE: Historical handoffs do not establish fresh evaluation evidence.'], evidence: filename, worker: null};
+    }
+    const actual = evidenceFile(filename);
+    if (actual.sha256 !== unresolved.evidence_sha256 || path.dirname(filename) !== path.join(canonical, 'unresolved')) throw new GateError('UNRESOLVED_EVIDENCE_CHANGED', 'The canonical handoff bytes or location changed.');
+    const handoff = loadRecord(filename);
+    const scope = asRecord(handoff.campaign, 'handoff campaign');
+    if (handoff.schema !== unresolved.evidence_schema || scope.path !== canonical || scope.id !== state.id || scope.declaration_digest !== state.declaration_digest ||
+        scope.evaluation_id !== (state.declaration.evaluation_id ?? null) || scope.group !== (state.declaration.group ?? null) || handoff.cell_id !== cell.id ||
+        handoff.outcome !== cell.outcome || handoff.reason !== unresolved.reason || handoff.resume_condition !== unresolved.resume_condition ||
+        handoff.created_at !== unresolved.resolved_at || digest(handoff.recovery) !== digest(unresolved.recovery) ||
+        handoff.previous_attempt !== unresolved.previous_attempt || handoff.strategy_path !== cell.strategy) {
+      throw new GateError('UNRESOLVED_HANDOFF_BINDING', 'Handoff differs from its declaration, approval, current cell or recorded resolution.');
+    }
+    if (!handoff.worker_evidence) throw new GateError('UNRESOLVED_CURRENT_WORKER', 'A new wrapper around background material is not current failed-worker evidence.');
+    const worker = checkedEvidenceFile(handoff.worker_evidence);
+    workerPath = worker.path;
+    const proof = failedWorker(canonical, state, cell, worker.path);
+    const operation = asRecord(proof.record.operation);
+    if (operation.inputs === undefined) return {valid: true, fresh: false, kind: 'legacy_read_only',
+      reasons: ['LEGACY_WORKER_EVIDENCE: Historical workers lack current operation input bindings.'], evidence: filename, worker: workerPath};
+    const inputs = asRecord(operation.inputs, 'operation input binding');
+    const checked = models.checkedStrategy(stringValue(cell.strategy));
+    const upstream = asRecord(inputs.upstream);
+    const upstreamPath = absolutePath(stringValue(asRecord(definition(state, cell.id).build).release_snapshot ?? path.join(ROOT, 'output/host/upstream-lock.json')));
+    if (inputs.schema !== 'embedding-campaign-operation-inputs/1' || inputs.campaign_path !== canonical || inputs.campaign_id !== state.id ||
+        inputs.declaration_digest !== state.declaration_digest || inputs.evaluation_id !== scope.evaluation_id || inputs.group !== scope.group || inputs.cell_id !== cell.id ||
+        inputs.strategy_path !== cell.strategy || inputs.strategy_id !== checked.strategy.id || inputs.receipt_identity !== checked.receiptIdentity ||
+        inputs.model_fingerprint_digest !== digest(checked.strategy.model_fingerprint) || upstream.path !== upstreamPath ||
+        upstream.digest !== digest(loadRecord(upstreamPath)) || upstream.sha256 !== sha256Bytes(fs.readFileSync(upstreamPath))) {
+      throw new GateError('UNRESOLVED_INPUT_BINDING', 'Fresh blocking evidence differs from its actual receipt, model or frozen upstream inputs.');
+    }
+    const contextEvidence = asRecord(handoff.context_evidence, 'background evidence');
+    const contextActual = evidenceFile(stringValue(contextEvidence.path));
+    const contextPath = `${filename.slice(0, -'.json'.length)}.context`;
+    if (!filename.endsWith('.json') || contextActual.path !== contextPath || contextActual.sha256 !== contextEvidence.sha256 || contextActual.size !== contextEvidence.size ||
+        contextEvidence.origin_sha256 !== contextActual.sha256 || contextEvidence.origin_size !== contextActual.size ||
+        !path.isAbsolute(stringValue(contextEvidence.origin_path)) || digest(unresolved.context_evidence) !== digest(contextEvidence)) {
+      throw new GateError('UNRESOLVED_EVIDENCE_CHANGED', 'Sealed background evidence changed; later changes to its original live path do not alter this snapshot.');
+    }
+    const created = evidenceTime(handoff.created_at, 'handoff creation');
+    const assessmentInputs = recoveryInputs(canonical, state, cell, stringValue(handoff.created_at));
+    if (digest(handoff.recovery_inputs) !== digest(assessmentInputs)) throw new GateError('UNRESOLVED_RECOVERY_BINDING', 'Recovery review differs from the attempts and budget known at resolution.');
+    const assessment = assessRecovery(assessmentInputs);
+    if (digest(handoff.recovery_assessment) !== digest(assessment) || !assessment.resolution.allowed) {
+      throw new GateError('UNRESOLVED_RECOVERY_REVIEW', 'Resolution does not retain a valid generation-time recovery review.');
+    }
+    const started = evidenceTime(operation.started_at, 'worker start');
+    const finished = evidenceTime(proof.record.finished_at, 'worker finish');
+    const boundary = options.notBefore === undefined ? evidenceTime(state.created_at, 'campaign creation') : evidenceTime(options.notBefore, 'evaluation freeze');
+    if (created < finished || created > Date.now() || started < boundary || finished < boundary || created < boundary ||
+        fs.statSync(filename).mtimeMs < boundary || worker.modified < boundary) reasons.push('UNRESOLVED_STALE_EVIDENCE: A fresh handoff requires a worker executed after the evaluation boundary.');
+    if (options.evaluationId !== undefined && scope.evaluation_id !== options.evaluationId) reasons.push('UNRESOLVED_EVALUATION: Handoff belongs to another evaluation.');
+    if (options.upstreamDigest !== undefined && upstream.digest !== options.upstreamDigest) reasons.push('UNRESOLVED_UPSTREAM: Worker used another frozen upstream snapshot.');
+    if (options.controlThreads !== undefined && !options.controlThreads.has(stringValue(proof.invocation.codex_thread_id))) reasons.push('UNRESOLVED_CONTROL: Failed worker was not initiated by a verified actual control thread.');
+    if (inputs.evidence_kind !== 'measured' || checked.strategy.evidence_kind === 'mock' || checked.manifest.evidence_kind === 'mock' || loadRecord(upstreamPath).evidence_kind === 'mock') reasons.push('MOCK_OR_UNVERIFIED_EVIDENCE: Only current observed inputs can support real blocked-condition acceptance.');
+  } catch (error: unknown) {
+    if (!(error instanceof Error)) throw error;
+    reasons.push(`${error instanceof GateError ? error.code : error.name}: ${error.message}`);
+  }
+  const valid = reasons.length === 0;
+  return {valid, fresh: valid, kind: valid ? 'fresh' : 'invalid', reasons, evidence: filename, worker: workerPath};
+}
+
 /** Stores an evidenced unresolved outcome; PASS can only come from measurement. */
 export async function resolve(base: string, cellId: string, options: ResolveOptions): Promise<JsonObject> {
   if (!TERMINAL.has(options.outcome) || options.outcome === 'PASS' || !options.reason.trim() || !options.resumeCondition.trim() || !fs.existsSync(options.evidence)) {
@@ -783,8 +1026,39 @@ export async function resolve(base: string, cellId: string, options: ResolveOpti
   return await transaction(base, async (canonical, state) => await withExecutionLease({campaign: canonical}, async () => {
     if (cellId !== current(state) || state.active) throw new GateError('RECOVERY_STATE', 'Resolve only the inactive current cell.');
     const cell = cellState(state, cellId);
-    cell.unresolved = {reason: options.reason, evidence: absolutePath(options.evidence), resume_condition: options.resumeCondition,
-      previous_attempt: recoveryPredecessor(cell), recovery: cell.recovery, phase: cell.phase, resolved_at: now()};
+    const created = now();
+    const assessmentInputs = recoveryInputs(canonical, state, cell, created);
+    const assessment = assessRecovery(assessmentInputs);
+    if (!assessment.resolution.allowed) {
+      const candidates = assessment.candidates.filter((candidate) => assessment.resolution.untried_candidate_ids.includes(candidate.id));
+      throw new GateError('RECOVERY_REVIEW_REQUIRED', 'Available same-device recovery must be considered before resolving this cell.', {
+        nextAction: JSON.stringify({command: [process.execPath, path.join(ROOT, 'tools/embctl.ts'), 'campaign', 'retry', '--campaign', canonical, '--cell', cellId],
+          candidates: candidates.map((candidate) => ({id: candidate.id, retry_options: candidate.retry_options}))}), retryable: true});
+    }
+    const currentFailure = optionalString(cell.recovery?.evidence);
+    let workerEvidence: JsonObject | null = null;
+    let workerInputs: unknown;
+    if (currentFailure && path.dirname(absolutePath(currentFailure)) === path.join(canonical, 'workers')) {
+      const proof = failedWorker(canonical, state, cell, currentFailure);
+      workerEvidence = proof.file;
+      workerInputs = asRecord(proof.record.operation).inputs;
+    }
+    if (options.outcome === 'BLOCKED' && typeof state.declaration.evaluation_id === 'string' && (!workerEvidence || workerInputs === undefined)) {
+      throw new GateError('UNRESOLVED_CURRENT_WORKER', 'Evaluation BLOCKED requires the current actual failed worker with immutable operation inputs before resolution.', {
+        nextAction: JSON.stringify({command: [process.execPath, path.join(ROOT, 'tools/embctl.ts'), 'campaign', 'run', '--campaign', canonical],
+          reason: 'Preserve the current finite worker failure before resolving this evaluation condition.'}), retryable: true});
+    }
+    const stem = path.join(canonical, 'unresolved', `${cell.id}-${randomUUID()}`);
+    const evidence = `${stem}.json`;
+    const contextEvidence = preserveContextEvidence(options.evidence, `${stem}.context`);
+    save(evidence, {schema: 'embedding-campaign-unresolved/1', created_at: created,
+      campaign: {path: canonical, id: state.id, declaration_digest: state.declaration_digest, evaluation_id: state.declaration.evaluation_id ?? null, group: state.declaration.group ?? null},
+      cell_id: cell.id, outcome: options.outcome, strategy_path: cell.strategy, reason: options.reason, resume_condition: options.resumeCondition,
+      previous_attempt: recoveryPredecessor(cell), recovery: cell.recovery, worker_evidence: workerEvidence, context_evidence: contextEvidence,
+      recovery_inputs: assessmentInputs, recovery_assessment: assessment});
+    cell.unresolved = {reason: options.reason, evidence, evidence_schema: 'embedding-campaign-unresolved/1', evidence_sha256: sha256Bytes(fs.readFileSync(evidence)),
+      context_evidence: contextEvidence, resume_condition: options.resumeCondition,
+      previous_attempt: recoveryPredecessor(cell), recovery: cell.recovery, phase: cell.phase, resolved_at: created};
     cell.outcome = options.outcome; cell.recovery = null;
     cell.phase = cell.attempt && fs.existsSync(path.join(cell.attempt, 'containers.json')) ? 'stop' : 'done';
     if (cell.phase === 'stop') cell.next_after_stop = 'done';
