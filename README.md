@@ -112,6 +112,8 @@ python3 tools/embctl.py campaign run --campaign output/campaigns/<id> --timeout 
 
 별도 연속성 검증에서는 실제 Codex 호출을 종료하고 새 호출로 이어가는 동작도 확인했습니다. 다른 모델·장치·환경은 현재 실행의 증거로 다시 판정합니다.
 
+모델별 설정·측정값·복구 과정과 미해결 조건은 [E2E 종합 보고서](docs/report/e2e-campaign-results.md)에 정리했습니다.
+
 ## 저장소에 포함되는 것
 
 | 공개하는 자산 | 로컬에 보존하는 자산 |
@@ -119,7 +121,7 @@ python3 tools/embctl.py campaign run --campaign output/campaigns/<id> --timeout 
 | 운영 소스·공통 설정·작업 규칙 | 모델 가중치·`manifest.yaml`·인증정보 |
 | `.agents/skills/`·공통 Codex 권한 설정 | 개인 권한 규칙·에이전트 세션·인터뷰·Seed |
 | 캠페인 템플릿·문서 골격·README 이미지 | 실제 캠페인·시도별 생성물·측정·로그 |
-| 재생성 도구와 검증 도구 | 발행 plan/devlog/checklist·로컬 위키 색인·`temp/`·`tests/` |
+| 재생성 도구·검증 도구·공개 report | 발행 plan/devlog/checklist·로컬 위키 색인·`temp/`·`tests/` |
 
 배포 경계는 [.gitignore](.gitignore)에 정리되어 있습니다. 클론한 뒤 자신의 모델과 환경으로 서빙 자산을 생성합니다. 장치 지원 경로와 엔진 버전은 [config/platforms.yaml](config/platforms.yaml)·[config/versions.yaml](config/versions.yaml)에 있으며, 실제 실증 여부와 구분합니다.
 

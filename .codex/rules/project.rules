@@ -24,3 +24,45 @@ prefix_rule(
     match = ["python3 -m unittest discover -s tests -v"],
     not_match = ["python3 -m unittest discover -s other-tests -v"],
 )
+
+prefix_rule(
+    pattern = ["python3", "tools/embctl.py", "campaign", ["init", "status", "step", "run", "attach", "retry", "resolve", "reopen", "report"]],
+    decision = "allow",
+    justification = "Approved campaign checkpoints and recovery; existing strategy receipts and worker leases remain required.",
+    match = ["python3 tools/embctl.py campaign run --campaign output/campaigns/example --timeout 600", "python3 tools/embctl.py campaign retry --campaign output/campaigns/example --cell a --reason failure --hypothesis fix --change patch"],
+    not_match = ["python3 tools/embctl.py approve --model /path/to/model", "python3 tools/embctl.py campaign answer --campaign output/campaigns/example --answer answer.json", "python3 tools/embctl.py campaign _work --campaign output/campaigns/example", "python3 -c \"print(1)\""],
+)
+
+prefix_rule(
+    pattern = ["python3", "tools/campaign_e2e.py", "--mode", ["discovery", "continuity"]],
+    decision = "allow",
+    justification = "Project continuity driver: real Codex calls and bounded caller termination for a campaign with approved receipts.",
+    match = ["python3 tools/campaign_e2e.py --mode discovery", "python3 tools/campaign_e2e.py --mode continuity --campaign output/campaigns/example --timeout 1800"],
+    not_match = ["python3 tools/campaign_e2e.py --mode arbitrary", "python3 tools/other.py"],
+)
+
+prefix_rule(
+    pattern = ["docker", ["ps", "images"]],
+    decision = "allow",
+    justification = "Read-only container and image inventory used before and after the approved campaign.",
+    match = ["docker ps -a --filter label=easy-emb.attempt", "docker images"],
+    not_match = ["docker run example", "docker system prune", "docker rm example"],
+)
+
+prefix_rule(
+    pattern = ["docker", "stats", "--no-stream"],
+    decision = "allow",
+    justification = "One-shot resource observation during the approved embedding workload.",
+    match = ["docker stats --no-stream"],
+    not_match = ["docker stats", "docker system prune"],
+)
+
+
+
+prefix_rule(
+    pattern = ["python3", "tools/review.py"],
+    decision = "allow",
+    justification = "Fixed local Codex review entrypoint rejects all extra arguments before launching the reviewer.",
+    match = ["python3 tools/review.py"],
+    not_match = ["codex review --uncommitted", "python3 tools/other.py"],
+)

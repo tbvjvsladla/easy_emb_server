@@ -19,6 +19,8 @@ enabled = true
 "pypi.org" = "allow"
 "files.pythonhosted.org" = "allow"
 "download.pytorch.org" = "allow"
+# Official wheel redirect observed in the NAS campaign build logs.
+"download-r2.pytorch.org" = "allow"
 "huggingface.co" = "allow"
 "*.huggingface.co" = "allow"
 "hf.co" = "allow"

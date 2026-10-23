@@ -8,6 +8,8 @@
 /facts/
 /docs/*/*
 !/docs/*/example.md
+# report는 검토한 공개 결과 보고서다. 원시 로그/실행 상태는 output에 둔다.
+!/docs/report/*.md
 
 # campaigns에는 규약과 템플릿만 배포한다. 실제 실행은 output/campaigns/에 저장한다.
 /campaigns/*

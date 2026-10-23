@@ -7,6 +7,24 @@
 - 공개 `project.rules`는 저장소 루트 기준의 상대 명령을 사용한다. 호스트 절대경로를 포함한 개인별 추가 규칙은 비추적 `.codex/rules/local.rules`에 둔다. Codex UI의 영구 허용은 기본적으로 사용자 전역 `~/.codex/rules/default.rules`에 저장된다. 프로젝트 규칙 파일로 자동 저장되는 것은 아니다.
 - 전역에서 이미 허용한 명령도 계속 유효하다. 임시 `/tmp` 설치 스크립트의 허용을 새 프로젝트 규칙으로 계승하지 않는다.
 
+## 승인된 캠페인과 관측 명령
+
+2026-10-23 실제 NAS 캠페인의 반복 승인을 대조해 다음 누락을 보완했다.
+
+| 위치 | 범위 |
+|---|---|
+| `config.toml` | 공식 wheel 리다이렉션에서 관측한 `download-r2.pytorch.org`. 기존 PyTorch/PyPI·이미지·loopback·Docker 소켓 허용 유지 |
+| `project.rules` | `python3 tools/embctl.py campaign`의 init/status/step/run/attach/retry/resolve/reopen/report |
+| `project.rules` | `python3 tools/campaign_e2e.py --mode discovery\|continuity`. continuity는 승인 영수증이 있는 캠페인의 실제 호출자 종료·재호출 검증 |
+| `project.rules` | `docker ps`, `docker images`, `docker stats --no-stream`, `python3 tools/review.py` |
+| 비추적 `local.rules` | 이 호스트에서 드라이버가 생성하는 Python/도구 절대경로의 동일 범위 |
+
+`approve`, `campaign answer`, 내부 `_work`, 임의 Python/셸, 일반 `codex exec`, Docker 전역 정리는 새 allow에 포함하지 않는다. `attach`도 기존 실제 영수증을 검증하며, 허용 규칙이 사용자 답변을 생성하지 않는다. `not_match`는 해당 규칙의 회귀 예제이며 다른 전역/관리 규칙의 allow를 취소하는 deny가 아니다.
+
+호스트 절대경로와 `sys.executable`은 상대 명령과 다른 접두어다. 다른 개발 환경은 자신의 정확한 경로를 `local.rules`에 기록한다. WSL의 GPU 접근 거부는 다운로드 도메인 추가로 해결되지 않는다. `/dev` 전체나 보호 디렉터리의 쓰기 권한을 넓히지 않는다. R2 전송 중단/해시 불일치 역시 도메인 허용과 별개이므로 무결성 검증을 유지한다.
+
+GPU 관측은 승인한 `embctl init`·`bench`·캠페인 내부의 고정 조회를 사용한다. 직접 `nvidia-smi` 접두어는 프로젝트 allow에 추가하지 않는다. query 뒤에 `--filename`을 붙이면 보호 파일도 덮어쓸 수 있기 때문이다. 직접 진단이 필요하면 이미 승인한 실제 명령 범위를 재사용하며, 새 인자까지 승인된 것으로 해석하지 않는다.
+
 복합 셸의 리다이렉션·변수·glob 때문에 명령 전체가 다른 접두어로 판정될 수 있다. 같은 검증은 고정 진입점으로 실행한다.
 
 ```bash
@@ -16,6 +34,10 @@ python3 tools/verify.py --suite wiki
 ```
 
 실제 실행 명령과 로그·결과는 `output/validation/verify/<UTC시각>/`에 보존된다. 임의 명령 실행 인자는 받지 않는다.
+
+리뷰는 `python3 tools/review.py`로 실행한다. 이 진입점은 추가 인자를 거부한 뒤 저장소 루트에서 고정 `codex review --uncommitted`만 실행한다. 직접 Codex 접두어는 `-c`로 새 MCP 명령 등을 끼워 넣을 수 있어 프로젝트 allow에 넣지 않는다. 이번 보완 과정에서 저장한 해당 전역 허용 한 건도 제거했다. 기존의 다른 사용자 전역 승인은 유지한다.
+
+`bash -lc 'python3 tools/review.py > ...'`는 위 접두어와 일치하지 않을 수 있다. 외부 호출자는 argv 실행의 stdout을 로그로 저장하거나 이미 승인한 정확한 래퍼를 재사용한다. 임의 `bash -lc` 전체를 허용하지 않는다.
 
 `temp/`·`tests/`는 사용자 정책에 따라 중첩 위치까지 비추적이다. 위 테스트 명령은 로컬 테스트 소스가 있는 개발 환경에서 사용한다. 소스가 없는 suite는 `UNAVAILABLE`로 기록하고 성공으로 집계하지 않으며, 다른 실패가 없으면 종료 코드 2를 반환한다. 실제 모델 E2E는 `embctl bench`·캠페인으로 수행한다.
 
