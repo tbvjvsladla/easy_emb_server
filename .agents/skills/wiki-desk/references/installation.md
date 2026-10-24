@@ -5,7 +5,7 @@
 - util-linux `flock(1)`. 없으면 잠금 없이 돌지 않고 거부한다.
 - 스킬은 **폴더 전체**(`.agents/skills/wiki-desk/`)가 한 단위다. `SKILL.md`만 복사하는 것은 설치가 아니다.
 - 설치 확인: 저장소 루트에서 `node .agents/skills/wiki-desk/src/cli.ts init --contract .agents/skills/wiki-desk/assets/project-contract.json`으로 초기화 계획을 확인한다(`--apply` 없이 쓰기 0). 이미 서고가 있으면 `status`·`check`로 확인한다.
-- 이 프로젝트는 `temp/`·`tests/`를 로컬에만 보존한다. 테스트 소스가 있는 개발 환경에서는 `node tools/verify.ts --suite wiki` 또는 패키지 폴더의 `npm test`로 회귀를 실행한다. 공개본에서 테스트 소스가 없으면 `UNAVAILABLE`과 종료 코드 2를 반환하며 PASS로 표시하지 않는다.
+- 이 프로젝트는 `temp/`·`tests/`를 로컬에만 보존한다. 테스트 소스가 있는 개발 환경에서는 `node .agents/validation/verify.ts --suite wiki` 또는 패키지 폴더의 `npm test`로 회귀를 실행한다. 공개본에서 테스트 소스가 없으면 `UNAVAILABLE`과 종료 코드 2를 반환하며 PASS로 표시하지 않는다.
 
 ## 서고 초기화
 | 명령 | 쓰기 |

@@ -1,6 +1,6 @@
 # 현재 시도의 PASS
 
-코드: `tools/embedding/bench.ts`의 `validateRoutine → functional → run → validateResult`.
+코드: `.agents/skills/embedding-lite-bench/src/bench.ts`의 `validateRoutine → functional → run → validateResult`.
 
 기능검사: 단일/배치 개수·순서·차원·finite 벡터, 오류/입력 상한, contextual 처리, 실제 장치와 입력 정책. 측정: 워밍업 분리, 발행/완료/성공/실패/timeout 회계, 유한 시간과 성공 응답. latency·throughput·RAM/VRAM은 관측 상태와 함께 남긴다.
 

@@ -2,8 +2,12 @@
   "compilerOptions": {
     "target": "ESNext",
     "module": "NodeNext",
-    "lib": ["ESNext"],
-    "types": ["node"],
+    "lib": [
+      "ESNext"
+    ],
+    "types": [
+      "node"
+    ],
     "strict": true,
     "noEmit": true,
     "allowImportingTsExtensions": true,
@@ -12,6 +16,18 @@
     "noUncheckedIndexedAccess": true,
     "skipLibCheck": true
   },
-  "include": ["tools/**/*.ts"],
-  "exclude": ["node_modules", "output", "docs", "tests"]
+  "include": [
+    ".agents/harness/**/*.ts",
+    ".agents/validation/**/*.ts",
+    ".agents/skills/terraforming-node/src/**/*.ts",
+    ".agents/skills/embedding-upstream/src/**/*.ts",
+    ".agents/skills/embedding-explorer/src/**/*.ts",
+    ".agents/skills/embedding-lite-bench/src/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "output",
+    "docs",
+    "tests"
+  ]
 }

@@ -5,16 +5,18 @@ import {randomUUID} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import {setTimeout as delay} from 'node:timers/promises';
 import {GateError, ROOT, absolutePath, arrayValue, asRecord, cloneJson, digest, integerValue,
-  load, loadRecord, now, numberValue, omitRecordKeys, optionalString, save, sha256Bytes, stringValue} from './common.ts';
-import type {JsonObject} from './common.ts';
+  load, loadRecord, now, numberValue, omitRecordKeys, optionalString, save, sha256Bytes, stringValue} from '../../../harness/common.ts';
+import type {JsonObject} from '../../../harness/common.ts';
 import * as models from './models.ts';
 import * as attempts from './attempts.ts';
-import * as bench from './bench.ts';
+import {build as buildImage} from '../../embedding-upstream/src/build.ts';
+import {serve, stop} from './serving.ts';
+import * as bench from '../../embedding-lite-bench/src/bench.ts';
 import {assessRecovery} from './recovery.ts';
 import type {RecoveryInputs} from './recovery.ts';
-import {parseManifest} from './hardware.ts';
+import {parseManifest} from '../../terraforming-node/src/hardware.ts';
 import {LeaseBusyError, alive, assertPersistentExecutionEnvironment, executionLeasePaths, identity, inheritedLeaseBindings, observeProcess,
-  runCommand, spawnDetached, withExecutionLease, withFileLease, withInheritedLeases} from './processes.ts';
+  runCommand, spawnDetached, withExecutionLease, withFileLease, withInheritedLeases} from '../../../harness/processes.ts';
 
 /** Finite campaign phases; prepare also runs under recorded worker ownership. */
 export type Phase = 'prepare' | 'build' | 'serve' | 'bench' | 'stop' | 'done';
@@ -246,7 +248,7 @@ function summary(base: string, state: CampaignState): JsonObject {
       condition_id: definition(state, entry.id).condition_id ?? entry.id, result_compatibility: resultCompatibility(entry)})),
     journey_tail: state.journey.slice(-4), report: state.report,
     evaluation_id: state.declaration.evaluation_id ?? null, group: state.declaration.group ?? null,
-    resume_command: [process.execPath, path.join(ROOT, 'tools/embctl.ts'), 'campaign', 'step', '--campaign', base]};
+    resume_command: [process.execPath, path.join(ROOT, '.agents/skills/embedding-explorer/src/cli.ts'), 'campaign', 'step', '--campaign', base]};
 }
 
 /** Reads canonical checkpoint state without launching or replaying effects. */
@@ -629,7 +631,7 @@ export async function step(base: string): Promise<JsonObject> {
           codex_thread_id: process.env.CODEX_THREAD_ID ?? null, cell_id: cellId, attempt: cell.attempt, phase: cell.phase, started_at: now()});
         commit(canonical, state, 'phase_intent', state.active);
         try {
-          const worker = spawnDetached([process.execPath, path.join(ROOT, 'tools/embctl.ts'), 'campaign', '_work', '--campaign', canonical,
+          const worker = spawnDetached([process.execPath, path.join(ROOT, '.agents/skills/embedding-explorer/src/cli.ts'), 'campaign', '_work', '--campaign', canonical,
             '--operation-id', operationId, '--lease-bindings', JSON.stringify(inheritedLeaseBindings())], {logPath: log});
           await new Promise<void>((ready, reject) => { worker.once('spawn', () => { ready(); }); worker.once('error', reject); });
           if (!worker.pid) throw new GateError('WORKER_SPAWN', 'Worker has no process identity.');
@@ -721,14 +723,14 @@ export async function work(base: string, operationId: string, bindings: unknown)
         observed = await observedResources(attempt);
         verifyResources(observed);
         if (phase === 'build') {
-          result = await attempts.build(attempt);
+          result = await buildImage(attempt);
         } else if (phase === 'serve') {
-          result = await attempts.serve(attempt, {port: integerValue(runtime.port), bind: stringValue(runtime.bind)});
+          result = await serve(attempt, {port: integerValue(runtime.port), bind: stringValue(runtime.bind)});
         } else if (phase === 'bench') {
           result = await bench.run(attempt, stringValue(loadRecord(path.join(attempt, 'containers.json')).base_url), path.join(canonical, 'routine.yaml'));
           if (!(await validResult(cell))) throw new GateError('VERIFICATION_FAILED', 'Cell verification lacks current valid functional and measurement evidence.');
         } else if (phase === 'stop') {
-          result = fs.existsSync(path.join(attempt, 'containers.json')) ? await attempts.stop(attempt) : {stopped: true, reason: 'No containers created'};
+          result = fs.existsSync(path.join(attempt, 'containers.json')) ? await stop(attempt) : {stopped: true, reason: 'No containers created'};
         } else throw new GateError('CAMPAIGN_PHASE', `Cannot work phase ${phase}.`);
       }
     } catch (caught: unknown) { error = errorRecord(caught); }
@@ -1032,7 +1034,7 @@ export async function resolve(base: string, cellId: string, options: ResolveOpti
     if (!assessment.resolution.allowed) {
       const candidates = assessment.candidates.filter((candidate) => assessment.resolution.untried_candidate_ids.includes(candidate.id));
       throw new GateError('RECOVERY_REVIEW_REQUIRED', 'Available same-device recovery must be considered before resolving this cell.', {
-        nextAction: JSON.stringify({command: [process.execPath, path.join(ROOT, 'tools/embctl.ts'), 'campaign', 'retry', '--campaign', canonical, '--cell', cellId],
+        nextAction: JSON.stringify({command: [process.execPath, path.join(ROOT, '.agents/skills/embedding-explorer/src/cli.ts'), 'campaign', 'retry', '--campaign', canonical, '--cell', cellId],
           candidates: candidates.map((candidate) => ({id: candidate.id, retry_options: candidate.retry_options}))}), retryable: true});
     }
     const currentFailure = optionalString(cell.recovery?.evidence);
@@ -1045,7 +1047,7 @@ export async function resolve(base: string, cellId: string, options: ResolveOpti
     }
     if (options.outcome === 'BLOCKED' && typeof state.declaration.evaluation_id === 'string' && (!workerEvidence || workerInputs === undefined)) {
       throw new GateError('UNRESOLVED_CURRENT_WORKER', 'Evaluation BLOCKED requires the current actual failed worker with immutable operation inputs before resolution.', {
-        nextAction: JSON.stringify({command: [process.execPath, path.join(ROOT, 'tools/embctl.ts'), 'campaign', 'run', '--campaign', canonical],
+        nextAction: JSON.stringify({command: [process.execPath, path.join(ROOT, '.agents/skills/embedding-explorer/src/cli.ts'), 'campaign', 'run', '--campaign', canonical],
           reason: 'Preserve the current finite worker failure before resolving this evaluation condition.'}), retryable: true});
     }
     const stem = path.join(canonical, 'unresolved', `${cell.id}-${randomUUID()}`);

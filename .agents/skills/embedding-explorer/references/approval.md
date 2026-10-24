@@ -1,6 +1,6 @@
 # 실제 승인·서빙 게이트
 
-코드: `tools/embedding/models.ts`의 `inspectModel/validateUserSource/approve/checkedStrategy`, `attempts.ts`의 `serve`, `campaign.ts`의 `answer/attachStrategy`.
+코드: [models.ts](../src/models.ts)의 `inspectModel/validateUserSource/approve/checkedStrategy`, [serving.ts](../src/serving.ts)의 `serve`, [campaign.ts](../src/campaign.ts)의 `answer/attachStrategy`. 모델 fingerprint는 [model-fingerprint.ts](../src/model-fingerprint.ts)가 소유한다.
 
 새 승인 JSON:
 ```json

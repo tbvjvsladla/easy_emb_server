@@ -21,6 +21,8 @@
 # ── 에이전트 빌딩블럭 선별 배포 ──
 /.agents/*
 !/.agents/skills/
+!/.agents/harness/
+!/.agents/validation/
 /.codex/*
 !/.codex/config.toml
 !/.codex/rules/

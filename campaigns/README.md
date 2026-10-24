@@ -7,8 +7,8 @@
 새 세션·compact 뒤·외부 워커 호출은 먼저 다음 명령으로 시작한다.
 
 ```bash
-node tools/embctl.ts campaign status --campaign output/campaigns/<id>
-node tools/embctl.ts campaign step --campaign output/campaigns/<id>
+node .agents/skills/embedding-explorer/src/cli.ts campaign status --campaign output/campaigns/<id>
+node .agents/skills/embedding-explorer/src/cli.ts campaign step --campaign output/campaigns/<id>
 ```
 
 `status`는 목표·현재 셀/attempt·승인·미결 질문·실행 소유권·다음 작업·여정 끝부분을 JSON으로 반환한다.
@@ -19,8 +19,8 @@ node tools/embctl.ts campaign step --campaign output/campaigns/<id>
 ## 생성과 진행
 
 ```bash
-node tools/embctl.ts campaign init --spec /path/to/campaign.yaml
-node tools/embctl.ts campaign run --campaign output/campaigns/<id> --timeout 600
+node .agents/skills/embedding-explorer/src/cli.ts campaign init --spec /path/to/campaign.yaml
+node .agents/skills/embedding-explorer/src/cli.ts campaign run --campaign output/campaigns/<id> --timeout 600
 ```
 
 `run`은 유한 호출 예산 안에서 진행하고 예산에 도달하면 현재 상태를 반환한다. 실제 단계 worker는
@@ -42,7 +42,7 @@ recipes는 실제 생성 Dockerfile 이름에서 원본 파일 경로로 연결�
 기존 승인 영수증을 셀 선언의 `strategy`로 참조하거나, 시작 전 명시적으로 연결한다.
 
 ```bash
-node tools/embctl.ts campaign attach --campaign output/campaigns/<id> --cell <cell> --strategy output/<model>/strategies/<receipt>.yaml
+node .agents/skills/embedding-explorer/src/cli.ts campaign attach --campaign output/campaigns/<id> --cell <cell> --strategy output/<model>/strategies/<receipt>.yaml
 ```
 
 영수증이 없으면 CPU/GPU → 최대 입력 토큰 → 출력 차원 순서로 `input-required`를 반환한다.
@@ -54,7 +54,7 @@ node tools/embctl.ts campaign attach --campaign output/campaigns/<id> --cell <ce
 ```
 
 ```bash
-node tools/embctl.ts campaign answer --campaign output/campaigns/<id> --answer /path/to/human-answer.json
+node .agents/skills/embedding-explorer/src/cli.ts campaign answer --campaign output/campaigns/<id> --answer /path/to/human-answer.json
 ```
 
 출처 형식과 실제 사용자 메시지 검사는 `.agents/skills/embedding-explorer/references/approval.md`를 따른다. 다른 셀·바뀐 모델·이미 답한 질문에 다른 답변은 적용하지 않는다. 외부 호출자가 승인을 만들어내지 않는다.
@@ -78,10 +78,10 @@ node tools/embctl.ts campaign answer --campaign output/campaigns/<id> --answer /
 `--evidence`로 제공한 과거 자료는 배경 근거로 별도 보존하며 현재 실패를 대신하지 않는다.
 
 ```bash
-node tools/embctl.ts campaign retry --campaign output/campaigns/<id> --cell <cell> --reason '<실패>' --hypothesis '<가설>' --change '<변경>' --observation /path/to/new-evidence
-node tools/embctl.ts campaign resolve --campaign output/campaigns/<id> --cell <cell> --outcome BLOCKED --reason '<문제>' --evidence /path/to/evidence --resume-condition '<재개 조건>'
-node tools/embctl.ts campaign report --campaign output/campaigns/<id>
-node tools/embctl.ts campaign reopen --campaign output/campaigns/<id> --cell <미해결셀> --reason '<재개 조건 충족 근거>'
+node .agents/skills/embedding-explorer/src/cli.ts campaign retry --campaign output/campaigns/<id> --cell <cell> --reason '<실패>' --hypothesis '<가설>' --change '<변경>' --observation /path/to/new-evidence
+node .agents/skills/embedding-explorer/src/cli.ts campaign resolve --campaign output/campaigns/<id> --cell <cell> --outcome BLOCKED --reason '<문제>' --evidence /path/to/evidence --resume-condition '<재개 조건>'
+node .agents/skills/embedding-explorer/src/cli.ts campaign report --campaign output/campaigns/<id>
+node .agents/skills/embedding-explorer/src/cli.ts campaign reopen --campaign output/campaigns/<id> --cell <미해결셀> --reason '<재개 조건 충족 근거>'
 ```
 
 호출 결과, 셀 판정, 전체 검증/결과/미해결 보고 완료, 재개 가능성은 별개다. PASS는 같은 attempt의
@@ -104,16 +104,18 @@ hint-publisher와 hint 태그 발행은 구현하지 않는다.
 개발·검증을 마친 소스/정책/스킬과 공식 upstream 입력을 고정한 뒤 실제 Codex CLI로 평가한다. 모델과 추론강도는 gpt-6-luna/none으로 고정하며 실제 session_meta/turn_context와 도구 호출을 대조한다.
 
 ```bash
-node tools/campaign_e2e.ts --mode freeze --evaluation output/evaluations/<새-id> --upstream-snapshot output/host/upstream-lock.json
-node tools/campaign_e2e.ts --mode discovery --evaluation output/evaluations/<새-id> --timeout 300
-node tools/campaign_e2e.ts --mode campaign --evaluation output/evaluations/<새-id> --campaign output/campaigns/<full36> --group full36 --coverage /path/to/coverage.json --timeout 86400
-node tools/campaign_e2e.ts --mode campaign --evaluation output/evaluations/<새-id> --campaign output/campaigns/<representative6> --group representative6 --coverage /path/to/coverage.json --timeout 86400
-node tools/campaign_e2e.ts --mode continuity --evaluation output/evaluations/<새-id> --campaign output/campaigns/<strict3> --group strict3 --coverage /path/to/coverage.json --timeout 86400
+node .agents/validation/campaign_e2e.ts --mode freeze --evaluation output/evaluations/<새-id> --upstream-snapshot output/host/upstream-lock.json
+node .agents/validation/campaign_e2e.ts --mode discovery --evaluation output/evaluations/<새-id> --timeout 300
+node .agents/validation/campaign_e2e.ts --mode campaign --evaluation output/evaluations/<새-id> --campaign output/campaigns/<full36> --group full36 --coverage /path/to/coverage.json --timeout 86400
+node .agents/validation/campaign_e2e.ts --mode campaign --evaluation output/evaluations/<새-id> --campaign output/campaigns/<representative6> --group representative6 --coverage /path/to/coverage.json --timeout 86400
+node .agents/validation/campaign_e2e.ts --mode continuity --evaluation output/evaluations/<새-id> --campaign output/campaigns/<strict3> --group strict3 --coverage /path/to/coverage.json --timeout 86400
 ```
+
+discovery는 네 스킬의 SKILL.md·전용 CLI·역할별 실제 구현 경로를 모두 대조한다.
 
 freeze 이후 새 캠페인을 init한다. 선언에는 evaluation_id/group, 각 셀에 condition_id와 같은 고정 upstream 파일의 build.release_snapshot을 넣는다. init은 모델 효과를 실행하지 않는다. 최초 driver 호출 전에 step/run/build/serve/bench를 대신 수행하지 않는다.
 
-coverage는 conditions 배열이며 condition_id/model/model_path/device/context_window/dimensions/prior_outcome/allowed_outcomes를 담는다. 원래 36개 조건 중 34 PASS는 각각 새 PASS를 요구하며 기존 nomic-xlm CPU/GPU 두 조건만 현재 재판정·복구 근거와 재개 조건이 있는 BLOCKED를 허용한다. 대표 6개와 엄격 3개는 각각 별도의 새 실측을 요구한다.
+coverage는 conditions 배열이며 condition_id/model/model_path/device/context_window/dimensions/prior_outcome/allowed_outcomes를 담는다. 원래 36개 조건 중 34 PASS는 각각 새 PASS를 요구하며 기존 nomic-xlm CPU/GPU 두 조건만 현재 재판정·복구 근거와 재개 조건이 있는 BLOCKED를 허용한다. 대표 6개와 엄격 3개는 각각 별도의 새 실측을 요구한다. 스킬 팩 이관 검증 `difficult6`는 Qwen3-Embedding-4B, Qwen3-VL-Embedding-2B, pplx-embed-context-v1-4b의 원래 CPU/GPU 6조건을 고정하며 전부 새 PASS를 요구한다. 세 종 모두 32768토큰, 차원은 각각 2560/2048/2560이다. 과거 PASS나 다른 조건의 개수로 대신하지 않는다.
 
 strict3는 small CPU → small GPU → base CPU의 순서다. 두 번째 셀의 실제 serve/bench worker가 실행 중일 때 caller와 coordinator를 종료하고, 살아 있는 worker를 유지한 채 새 Luna thread에서 재개한다. 완료된 첫 셀의 불변성과 원래 worker의 단 한 번 수행을 대조한다. 세 가지 장애 시나리오를 뜻하지 않는다.
 

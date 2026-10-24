@@ -1,22 +1,24 @@
-/** Generates native serving assets and gates every external effect on its evidence. */
+/** Owns approved attempt rendering, immutable evidence and bounded recovery contracts. */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import * as http from 'node:http';
 import {randomUUID} from 'node:crypto';
-import {setTimeout as delay} from 'node:timers/promises';
-import {GateError, ROOT, absolutePath, appendEvent, arrayValue, asRecord, cloneJson, digest, integerValue, load, loadRecord, now, omitRecordKeys, save, sha256Bytes, stringValue} from './common.ts';
-import type {JsonObject} from './common.ts';
-import {assertCurrentCompatibility, selectPlatform} from './hardware.ts';
+import {GateError, ROOT, absolutePath, appendEvent, arrayValue, asRecord, cloneJson, digest, integerValue, loadRecord, now, omitRecordKeys, save, sha256Bytes, stringValue} from '../../../harness/common.ts';
+import type {JsonObject} from '../../../harness/common.ts';
+import {assertCurrentCompatibility, selectPlatform} from '../../terraforming-node/src/hardware.ts';
 import {checkedStrategy, checkedStrategyForCleanup} from './models.ts';
-import {alive, hasExecutionLease, identity, observeProcess, runCommand, withExecutionLease} from './processes.ts';
-import {validateFrozenSources} from './upstream.ts';
-import type {ReleaseSnapshot} from './upstream.ts';
+import {alive, hasExecutionLease, identity, observeProcess, runCommand, withExecutionLease} from '../../../harness/processes.ts';
+import {validateFrozenSources} from '../../embedding-upstream/src/upstream.ts';
+import {nativeAssets, readNativeTextFiles} from '../../embedding-upstream/src/recipes.ts';
+import {assertNoOtherContainers} from './resources.ts';
 
 const ENGINES = new Set(['tei', 'sentence-transformers']);
+
 const DTYPES = new Set(['float32', 'float16', 'bfloat16']);
+
 const MAX_RECOVERY_ATTEMPTS = 8;
+
 const MAX_RECOVERY_SECONDS = 14_400;
-const RECIPE_NAMES = new Set(['Dockerfile', 'Dockerfile.gateway']);
+
 const FAILURE_ARTIFACTS = ['events.jsonl', 'build-backend.log', 'start-api.log', 'start-backend.log', 'container-api.log', 'container-backend.log'];
 
 /** Declares campaign provenance; a matching live worker lease is required as proof. */
@@ -50,12 +52,6 @@ export interface RenderOptions {
   recovery?: RecoveryOptions;
 }
 
-/** Provides the one typed build knob already recorded in the attempt condition. */
-export interface BuildOptions { builder?: string; }
-
-/** Defines the local API binding for a concrete container attempt. */
-export interface ServeOptions { port?: number; bind?: string; }
-
 /** Names the exact inputs to the legacy-compatible recipe identity. */
 export interface CompatibilityInputs {
   strategy: JsonObject;
@@ -88,20 +84,6 @@ export interface RuntimeSupport extends JsonObject {
   source_files: JsonObject;
 }
 
-/** Contains the exact native files shared by rendering and read-only recovery assessment. */
-export interface NativeAssets {
-  recipes: JsonObject;
-  recipeSnapshots: JsonObject;
-  dependencies: JsonObject;
-  dependencyLocks: JsonObject;
-  backendInputs: JsonObject;
-}
-
-interface Inspection {
-  status: 'present' | 'absent';
-  info?: JsonObject;
-}
-
 function gate(code: string, message: string, evidence: string[] = [], nextAction = 'inspect evidence and create a justified recovery attempt'): never {
   throw new GateError(code, message, {evidence, nextAction, retryable: false});
 }
@@ -114,24 +96,15 @@ function strings(value: unknown, label: string): string[] {
   return arrayValue(value, label).map((item) => stringValue(item, label));
 }
 
-function positiveInteger(value: unknown, label: string): number {
+/** Validates a positive integer used by sealed attempt phase limits. */
+export function positiveAttemptInteger(value: unknown, label: string): number {
   const integer = integerValue(value, label);
   if (integer <= 0) gate('invalid_attempt_limit', `${label} must be positive.`);
   return integer;
 }
 
-function textFiles(directory: string, predicate: (name: string) => boolean): JsonObject {
-  const records: JsonObject = {};
-  for (const name of fs.readdirSync(directory).filter((entry) => predicate(entry)).toSorted()) {
-    const filename = path.join(directory, name);
-    if (!fs.statSync(filename).isFile()) continue;
-    records[name] = fs.readFileSync(filename, 'utf8');
-  }
-  return records;
-}
-
 function recipesAt(attemptPath: string): JsonObject {
-  return textFiles(attemptPath, (name) => name.startsWith('Dockerfile'));
+  return readNativeTextFiles(attemptPath, (name) => name.startsWith('Dockerfile'));
 }
 
 function hasTeiFailure(attemptPath: string, upstreamId: string): boolean {
@@ -169,7 +142,7 @@ export function invalidateValidation(attemptPath: string, reason: string): void 
 /** Reproduces the existing Python compatibility digest, including legacy numeric tokens. */
 export function compatibility(inputs: CompatibilityInputs): string {
   const host = asRecord(inputs.manifest.host, 'manifest host');
-  const runtime = textFiles(inputs.runtimeRoot ?? path.join(ROOT, 'runtime'), (name) => name.endsWith('.py'));
+  const runtime = readNativeTextFiles(inputs.runtimeRoot ?? path.join(ROOT, 'runtime'), (name) => name.endsWith('.py'));
   const runtimeSource: JsonObject = {};
   for (const [name, content] of Object.entries(runtime)) runtimeSource[name] = digest(content);
   const data: JsonObject = {
@@ -230,7 +203,7 @@ function harnessSource(): JsonObject {
       else if (entry.isFile() && /\.(?:ts|json|toml|yaml|md|rules|sh)$/.test(entry.name)) add(filename);
     }
   };
-  for (const directory of ['tools', 'config', 'rules']) visit(path.join(ROOT, directory));
+  for (const directory of ['.agents/harness', '.agents/validation', 'config', 'rules']) visit(path.join(ROOT, directory));
   for (const skill of ['terraforming-node', 'embedding-upstream', 'embedding-explorer', 'embedding-lite-bench']) visit(path.join(ROOT, '.agents/skills', skill));
   for (const filename of ['AGENTS.md', 'package.json', 'package-lock.json', 'tsconfig.json', 'oxlintrc.jsonc', '.codex/config.toml', '.codex/rules/project.rules', 'campaigns/README.md']) add(path.join(ROOT, filename));
   return {schema: 'embedding-harness-source/1', node_version: process.version, files, digest: digest(files)};
@@ -296,6 +269,11 @@ function campaignGate(cfg: JsonObject, attemptPath: string | undefined, effect: 
   if (absolutePath(stringValue(cell.strategy, 'campaign receipt')) !== absolutePath(strategyPath)) gate('campaign_strategy_mismatch', 'Campaign cell refers to another approval receipt.', [campaignPath], nextAction);
   if (attemptPath !== undefined && absolutePath(stringValue(cell.attempt, 'campaign attempt')) !== attemptPath) gate('campaign_attempt_mismatch', 'Campaign cell refers to another attempt.', [campaignPath], nextAction);
   if (effect === 'prepare' && cell.attempt !== null && cell.attempt !== undefined) gate('campaign_attempt_exists', 'Preparation cannot overwrite a recorded attempt.', [campaignPath], nextAction);
+}
+
+function errorMessage(error: unknown): string {
+  if (!(error instanceof Error)) throw error;
+  return error.message;
 }
 
 function readAttemptIdentity(attemptPath: string, cleanup: boolean): CheckedAttempt {
@@ -437,76 +415,6 @@ export function containerBudget(manifest: JsonObject): {args: string[]; evidence
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
-}
-
-function nativeRecipes(cfg: JsonObject, snapshot: ReleaseSnapshot): JsonObject {
-  const platform = asRecord(cfg.platform);
-  if (cfg.engine === 'tei') return {
-    Dockerfile: `FROM ${stringValue(platform.tei_image)}\n`,
-    'Dockerfile.gateway': `FROM ${stringValue(snapshot.gateway_base)}\nWORKDIR /app\nCOPY requirements.gateway.txt /app/requirements.txt\nRUN pip install --no-cache-dir --timeout 120 --retries 5 --require-hashes -r /app/requirements.txt\nCOPY runtime /app/runtime\nENTRYPOINT ["python","-m","runtime.server"]\n`,
-  };
-  return {Dockerfile: `FROM ${stringValue(platform.st_base)}\nWORKDIR /app\nCOPY requirements.backend.txt /app/requirements.txt\nRUN pip install --no-cache-dir --timeout 120 --retries 5 --require-hashes -r /app/requirements.txt\nCOPY runtime /app/runtime\nENTRYPOINT ["python","-m","runtime.server"]\n`};
-}
-
-function validateRecipe(content: string, snapshot: ReleaseSnapshot, nativeContent: string): void {
-  const bases = new Set(Object.values(snapshot.images).map((value) => stringValue(asRecord(value).pinned)));
-  const stages = new Set<string>();
-  const lines = content.split(/\r?\n/);
-  let found = false;
-  for (const line of lines) {
-    const matched = /^\s*FROM\s+(?:--platform=\S+\s+)?(\S+)(?:\s+AS\s+(\S+))?\s*$/i.exec(line);
-    if (!matched) continue;
-    found = true;
-    const base = matched[1];
-    if (!base || (!bases.has(base) && !stages.has(base))) gate('recipe_base_unfrozen', 'Recipe base images must occur in the immutable upstream snapshot.');
-    if (matched[2]) stages.add(matched[2]);
-  }
-  if (!found) gate('recipe_missing_base', 'Dockerfile has no valid frozen FROM input.');
-  const instructions: string[] = [];
-  for (const source of lines) {
-    const line = source.trim();
-    if (/^#\s*(?:syntax|escape|check)\s*=/i.test(line)) gate('recipe_unfrozen_directive', 'Declared recipes cannot change the frozen Dockerfile parser or fetch a new frontend.');
-    if (!line || line.startsWith('#')) continue;
-    if (/^LABEL easy-emb\.note[.-][a-z0-9.-]+="[A-Za-z0-9 ._:/-]*"$/.test(line)) continue;
-    if (/^ENV (?:OMP_NUM_THREADS|MKL_NUM_THREADS)=[1-9][0-9]{0,3}$/.test(line) || /^ENV TOKENIZERS_PARALLELISM=(?:true|false)$/.test(line) || /^ENV (?:HF_HUB_OFFLINE|TRANSFORMERS_OFFLINE)=1$/.test(line)) continue;
-    instructions.push(line);
-  }
-  const nativeInstructions = nativeContent.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.length > 0);
-  if (digest(instructions) !== digest(nativeInstructions)) gate('recipe_dependencies_unfrozen', 'Declared recipes must preserve the native base, entrypoint and exact hashed dependency installation. Only explicit offline/thread/tokenizer settings and easy-emb.note annotations may be added.', [], 'prepare and review a new frozen source contract for additional package or code changes');
-}
-
-/** Validates and constructs frozen native assets without writing or starting a process. */
-export function nativeAssets(cfg: JsonObject, snapshot: ReleaseSnapshot, declaredRecipes: JsonObject = {}, runtimeRoot = path.join(ROOT, 'runtime')): NativeAssets {
-  const native = nativeRecipes(cfg, snapshot);
-  const recipes = recordClone(native);
-  const recipeSnapshots: JsonObject = {};
-  for (const [name, value] of Object.entries(declaredRecipes)) {
-    if (!RECIPE_NAMES.has(name) || (name === 'Dockerfile.gateway' && cfg.engine !== 'tei')) gate('unsupported_recipe', `Recipe ${name} is not supported by this engine.`);
-    const recipe = asRecord(value, 'declared recipe');
-    const content = stringValue(recipe.content, 'recipe content');
-    if (recipe.digest !== digest(content)) gate('recipe_snapshot_changed', 'Declared recipe content does not match its digest.');
-    recipes[name] = content;
-    recipeSnapshots[name] = recipe;
-  }
-  for (const [name, value] of Object.entries(recipes)) validateRecipe(stringValue(value, name), snapshot, stringValue(native[name], 'native recipe'));
-  const dependencies: JsonObject = {};
-  const dependencyLocks: JsonObject = {};
-  for (const role of cfg.engine === 'tei' ? ['gateway'] : ['backend']) {
-    const key = role === 'gateway' ? 'gateway' : stringValue(asRecord(cfg.platform).id);
-    const lock = asRecord(asRecord(snapshot.dependency_locks)[key], 'engine dependency lock');
-    const filename = `requirements.${role}.txt`;
-    dependencies[filename] = stringValue(lock.content);
-    dependencyLocks[role] = {file: filename, sha256: lock.sha256, source: lock.path};
-  }
-  return {recipes, recipeSnapshots, dependencies, dependencyLocks,
-    backendInputs: {dockerfile: recipes.Dockerfile, runtime: textFiles(runtimeRoot, (name) => name.endsWith('.py')), dependencies}};
-}
-
-/** Reads the full native backend build preimage used by the renderer and build tag. */
-export function backendBuildInputs(attemptPath: string): JsonObject {
-  return {dockerfile: fs.readFileSync(path.join(attemptPath, 'Dockerfile'), 'utf8'),
-    runtime: textFiles(path.join(attemptPath, 'runtime'), (name) => name.endsWith('.py')),
-    dependencies: textFiles(attemptPath, (name) => name.startsWith('requirements.') && name.endsWith('.txt'))};
 }
 
 function recoveryScope(cfg: JsonObject): string {
@@ -707,7 +615,7 @@ function recoveryRecord(options: RecoveryOptions | undefined, cfg: JsonObject): 
   const scoped = priorScopedAttempts(cfg);
   if (!scoped.some((item) => item.path === previous.path)) gate('recovery_scope_mismatch', 'The prior failure must exist in the preserved attempt directory for this scope.', [previous.path]);
   const prior = asRecord(previous.settings.recovery ?? {});
-  const count = Math.max(scoped.length + 1, typeof prior.attempt_number === 'number' ? positiveInteger(prior.attempt_number, 'prior attempt') + 1 : 2);
+  const count = Math.max(scoped.length + 1, typeof prior.attempt_number === 'number' ? positiveAttemptInteger(prior.attempt_number, 'prior attempt') + 1 : 2);
   const starts = scoped.map((item) => stringValue(asRecord(item.settings.recovery ?? {}).started_at ?? item.settings.created_at)).toSorted();
   const started = stringValue(starts[0], 'scope start time');
   if (count > MAX_RECOVERY_ATTEMPTS || (Date.now() - Date.parse(started)) / 1000 > MAX_RECOVERY_SECONDS || !Number.isFinite(Date.parse(started))) gate('recovery_budget_exhausted', 'The finite attempt/time budget for this recovery lineage is exhausted.', [previous.path]);
@@ -779,13 +687,13 @@ export async function render(strategyPath: string, output: string, options: Rend
   const budget = containerBudget(manifest);
   const platform = recordClone(selected);
   platform.docker_args = [...strings(platform.docker_args ?? [], 'platform Docker arguments'), ...budget.args];
-  const longContext = positiveInteger(strategy.context_window, 'context window') >= 16384;
+  const longContext = positiveAttemptInteger(strategy.context_window, 'context window') >= 16384;
   const limits: JsonObject = {build_timeout_seconds: 1800, startup_timeout_seconds: longContext ? 1800 : 600, functional_timeout_seconds: longContext ? 1800 : 600, container: budget.evidence, source: 'Finite initial host-derived execution limits; revisions require recovery evidence.'};
   if (options.limits) {
     if (!options.recovery) gate('limits_recovery_required', 'Timeout changes require a linked recovery hypothesis.');
     for (const [key, value] of Object.entries(options.limits)) {
       if (!['build_timeout_seconds', 'startup_timeout_seconds', 'functional_timeout_seconds'].includes(key)) gate('unsupported_recovery_knob', `Unsupported execution limit: ${key}`);
-      const seconds = positiveInteger(value, key);
+      const seconds = positiveAttemptInteger(value, key);
       if (seconds > MAX_RECOVERY_SECONDS) gate('recovery_timeout_exceeded', 'A phase timeout exceeds the total recovery time bound.');
       limits[key] = seconds;
     }
@@ -813,11 +721,11 @@ export async function render(strategyPath: string, output: string, options: Rend
     for (const [filename, content] of Object.entries(assets.dependencies)) fs.writeFileSync(path.join(directory, filename), stringValue(content));
     cfg.dependency_locks = assets.dependencyLocks;
     const localConfig = loadRecord(path.join(stringValue(strategy.model_path), 'config.json'));
-    if (engine === 'tei' && profile.model_type === 'nomic_bert' && !localConfig.max_position_embeddings && typeof localConfig.n_positions === 'number' && Number.isSafeInteger(localConfig.n_positions) && localConfig.n_positions >= positiveInteger(strategy.context_window, 'context window')) {
+    if (engine === 'tei' && profile.model_type === 'nomic_bert' && !localConfig.max_position_embeddings && typeof localConfig.n_positions === 'number' && Number.isSafeInteger(localConfig.n_positions) && localConfig.n_positions >= positiveAttemptInteger(strategy.context_window, 'context window')) {
       cfg.model_config_overrides = {max_position_embeddings: localConfig.n_positions};
       cfg.model_config_override_reason = 'Standard alias for observed Nomic n_positions; preserve trained limits and approved context.';
     }
-    if (engine === 'tei' && profile.model_type === 'qwen3' && typeof localConfig.max_position_embeddings === 'number' && localConfig.max_position_embeddings > positiveInteger(strategy.context_window, 'context window')) {
+    if (engine === 'tei' && profile.model_type === 'qwen3' && typeof localConfig.max_position_embeddings === 'number' && localConfig.max_position_embeddings > positiveAttemptInteger(strategy.context_window, 'context window')) {
       cfg.model_config_overrides = {max_position_embeddings: strategy.context_window};
       cfg.model_config_override_reason = 'Align router capacity to approved model-card context; preserve weights and RoPE parameters.';
     }
@@ -830,80 +738,14 @@ export async function render(strategyPath: string, output: string, options: Rend
     cfg.input_identity = inputIdentity(cfg);
     save(path.join(directory, 'settings.yaml'), cfg);
     fs.writeFileSync(path.join(directory, 'serve.env'), 'EMB_API_BIND=127.0.0.1\nEMB_API_PORT=8080\n');
-    fs.writeFileSync(path.join(directory, 'run.sh'), `#!/usr/bin/env bash\nset -euo pipefail\nsource ${shellQuote(path.join(directory, 'serve.env'))}\nexec ${shellQuote(process.execPath)} ${shellQuote(path.join(ROOT, 'tools/embctl.ts'))} serve --attempt ${shellQuote(directory)} --bind "$EMB_API_BIND" --port "$EMB_API_PORT" "$@"\n`, {mode: 0o755});
+    fs.writeFileSync(path.join(directory, 'run.sh'), `#!/usr/bin/env bash\nset -euo pipefail\nsource ${shellQuote(path.join(directory, 'serve.env'))}\nexec ${shellQuote(process.execPath)} ${shellQuote(path.join(ROOT, '.agents/skills/embedding-explorer/src/cli.ts'))} serve --attempt ${shellQuote(directory)} --bind "$EMB_API_BIND" --port "$EMB_API_PORT" "$@"\n`, {mode: 0o755});
     event(directory, 'attempt_prepared', {engine, reason: cfg.engine_reason, upstream_id: snapshot.id, previous_compatible_pass: cfg.previous_compatible_pass});
     return directory;
   });
 }
 
-function errorMessage(error: unknown): string {
-  if (!(error instanceof Error)) throw error;
-  return error.message;
-}
-
-function inspectionPresent(inspection: Inspection, label: string): JsonObject {
-  if (inspection.status !== 'present' || !inspection.info) gate('resource_missing', `${label} is absent; reconcile the stored resource intent before retry.`);
-  return inspection.info;
-}
-
-async function inspectDocker(kind: 'container' | 'image' | 'network', name: string): Promise<Inspection> {
-  const result = await runCommand(['docker', kind, 'inspect', name], {timeoutSeconds: 30, effect: 'observe'});
-  if (result.code !== 0 || result.timedOut || result.spawnError) {
-    const text = result.stderr.trim();
-    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const absence = new RegExp(`^(?:Error response from daemon: |Error: )?(?:No such (?:object|${kind}): ${escaped}|network ${escaped} not found)$`, 'i');
-    if (!result.timedOut && !result.spawnError && result.code === 1 && text.split(/\r?\n/).every((line) => absence.test(line))) return {status: 'absent'};
-    gate('docker_observation_failed', `Docker ${kind} observation failed; this is not evidence of absence: ${text || result.spawnError?.message || result.stdout}`);
-  }
-  let value: unknown;
-  try {
-    value = JSON.parse(result.stdout);
-  } catch (error: unknown) {
-    gate('docker_invalid_response', `Docker inspect returned invalid JSON: ${errorMessage(error)}`);
-  }
-  const values = arrayValue(value, 'Docker inspect list');
-  if (values.length !== 1) gate('docker_invalid_response', 'Docker inspect must identify exactly one resource.');
-  return {status: 'present', info: asRecord(values[0], 'Docker resource')};
-}
-
-/** Reads one exact Docker image identity without converting daemon failures to absence. */
-export async function inspectImage(name: string): Promise<JsonObject> {
-  return inspectionPresent(await inspectDocker('image', name), `Image ${name}`);
-}
-
-function labelsOf(info: JsonObject, kind: 'container' | 'network'): JsonObject {
-  return asRecord(kind === 'container' ? asRecord(info.Config, 'container config').Labels ?? {} : info.Labels ?? {}, 'resource labels');
-}
-
-function assertOwned(info: JsonObject, attempt: CheckedAttempt, kind: 'container' | 'network'): void {
-  const labels = labelsOf(info, kind);
-  const legacyNetwork = kind === 'network' && attempt.settings.schema === 'embedding-attempt/1' && labels['easy-emb.strategy'] === undefined && creationRecorded(attempt, 'network', stringValue(info.Id));
-  if (labels['easy-emb.attempt'] !== attempt.settings.id || (labels['easy-emb.strategy'] !== attempt.strategy.id && !legacyNetwork)) {
-    gate('resource_owner_mismatch', `Refusing ${kind} operation: its attempt and strategy labels do not match this receipt.`, [attempt.path]);
-  }
-}
-
-function creationRecorded(attempt: CheckedAttempt, role: string, id: string): boolean {
-  const filename = path.join(attempt.path, role === 'network' ? 'network-create.log' : `start-${role}.log`);
-  return fs.existsSync(filename) && fs.readFileSync(filename, 'utf8').split(/\r?\n/).some((line) => line.trim() === id);
-}
-
-async function assertNoOtherContainers(attempt: CheckedAttempt): Promise<void> {
-  const result = await runCommand(['docker', 'ps', '--quiet', '--filter', 'label=easy-emb.attempt'], {timeoutSeconds: 30, effect: 'observe'});
-  if (result.code !== 0 || result.timedOut || result.spawnError) gate('docker_observation_failed', `Cannot reconcile other harness resources: ${result.stderr || result.spawnError?.message || result.stdout}`);
-  for (const id of result.stdout.split(/\s+/).filter((value) => value.length > 0)) {
-    const observed = await inspectDocker('container', id);
-    if (observed.status === 'absent') continue;
-    const info = inspectionPresent(observed, id);
-    const labels = labelsOf(info, 'container');
-    if (labels['easy-emb.attempt'] !== attempt.settings.id) {
-      gate('harness_resource_busy', `Another harness attempt still owns a running container: ${id}`, [attempt.path], 'capture and stop the owning attempt through its campaign before continuing');
-    }
-  }
-}
-
-/** Persists intent before a finite external effect and retains actual process identity. */
-async function execute(attemptPath: string, label: string, argv: string[], timeoutSeconds = 1800): Promise<void> {
+/** Persists finite effect intent and real command identity under the original attempt lease. */
+export async function executeAttemptCommand(attemptPath: string, label: string, argv: string[], timeoutSeconds = 1800): Promise<void> {
   if (!hasExecutionLease(path.join(attemptPath, '.execution.lock'))) gate('execution_lease_required', 'Effect commands require the validated per-attempt execution lease.');
   if (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0 || timeoutSeconds > MAX_RECOVERY_SECONDS) gate('invalid_attempt_limit', 'Command deadline must be finite and within the recovery bound.');
   if (!/^[a-z][a-z0-9-]*$/.test(label)) gate('invalid_phase_label', 'Effect log labels must be simple phase names.');
@@ -926,64 +768,14 @@ async function execute(attemptPath: string, label: string, argv: string[], timeo
   }
 }
 
-function retainFailure(attempt: CheckedAttempt, phase: string, error: unknown): void {
+/** Preserves a failed phase and its sealed attempt inputs before retry assessment. */
+export function retainAttemptFailure(attempt: CheckedAttempt, phase: string, error: unknown): void {
   const message = errorMessage(error);
   attempt.settings.state = phase === 'build' ? 'build_failed' : 'startup_failed';
   attempt.settings.error = message;
   save(path.join(attempt.path, 'failure.json'), {at: now(), phase, message, condition_digest: digest(condition(attempt.settings)), input_identity: attempt.settings.input_identity});
   save(path.join(attempt.path, 'settings.yaml'), attempt.settings);
   event(attempt.path, 'phase_failed', {phase, error: message});
-}
-
-function buildRecipe(attemptPath: string, filename: string): string {
-  if (filename === 'Dockerfile') return digest(backendBuildInputs(attemptPath)).slice(0, 16);
-  return digest({dockerfile: fs.readFileSync(path.join(attemptPath, filename), 'utf8'), runtime: textFiles(path.join(attemptPath, 'runtime'), (name) => name.endsWith('.py')), dependencies: textFiles(attemptPath, (name) => name.startsWith('requirements.') && name.endsWith('.txt'))}).slice(0, 16);
-}
-
-/** Builds native container recipes after validating approval, ownership, input pins and limits. */
-export async function build(attemptPath: string, options: BuildOptions = {}): Promise<JsonObject> {
-  return withAttemptExecution(attemptPath, 'build', async (attempt) => {
-    const cfg = attempt.settings;
-    const builder = options.builder ?? (typeof cfg.builder === 'string' ? cfg.builder : undefined);
-    if ((builder ?? null) !== cfg.builder) gate('builder_condition_changed', 'Builder differs from the sealed attempt; render a new declared condition.');
-    if (['build_failed', 'startup_failed', 'interrupted'].includes(stringValue(cfg.state))) gate('recovery_required', 'A failed attempt needs a new bounded recovery attempt.');
-    if (['built', 'serving', 'stopped'].includes(stringValue(cfg.state)) && fs.existsSync(path.join(attempt.path, 'images.json'))) return {attempt: attempt.path, state: cfg.state, images: await validateImages(attempt), reconciled: true};
-    if (cfg.state !== 'prepared') gate('build_state_unreconciled', 'An interrupted build must be reconciled and linked to a new recovery attempt before another build command.', [attempt.path]);
-    const roles = cfg.engine === 'tei' ? ['backend', 'gateway'] : ['backend'];
-    const intent: JsonObject = {};
-    for (const role of roles) {
-      const filename = role === 'backend' ? 'Dockerfile' : 'Dockerfile.gateway';
-      const recipe = buildRecipe(attempt.path, filename);
-      intent[role] = {tag: `easy-emb-${role}:${recipe}`, recipe, dockerfile: filename};
-    }
-    save(path.join(attempt.path, 'image-intent.json'), {at: now(), attempt_id: cfg.id, strategy_id: attempt.strategy.id, images: intent});
-    cfg.state = 'building';
-    save(path.join(attempt.path, 'settings.yaml'), cfg);
-    invalidateValidation(attempt.path, 'New build requires a fresh serving verification.');
-    const images: JsonObject = {};
-    try {
-      for (const role of roles) {
-        const planned = asRecord(intent[role]);
-        const tag = stringValue(planned.tag);
-        const argv = ['docker', 'buildx', 'build', '--load', '--progress=plain', '--label', `easy-emb.recipe=${planned.recipe}`, '--label', 'easy-emb.project=easy_emb_server'];
-        if (builder) argv.push('--builder', builder);
-        argv.push('-t', tag, '-f', path.join(attempt.path, stringValue(planned.dockerfile)), attempt.path);
-        await execute(attempt.path, `build-${role}`, argv, positiveInteger(asRecord(cfg.limits).build_timeout_seconds, 'build timeout'));
-        const info = await inspectImage(tag);
-        const labels = asRecord(asRecord(info.Config).Labels ?? {});
-        if (labels['easy-emb.recipe'] !== planned.recipe) gate('built_image_recipe_mismatch', 'Built image does not carry this exact recipe identity.', [attempt.path]);
-        images[role] = {tag, id: stringValue(info.Id, 'built image ID'), repo_digests: info.RepoDigests ?? null, recipe: planned.recipe};
-        save(path.join(attempt.path, 'images.json'), images);
-      }
-      cfg.state = 'built';
-      delete cfg.error;
-      save(path.join(attempt.path, 'settings.yaml'), cfg);
-    } catch (error: unknown) {
-      retainFailure(attempt, 'build', error);
-      throw error;
-    }
-    return {attempt: attempt.path, state: cfg.state, images};
-  });
 }
 
 /** Locates the newest built attempt for an unchanged approval, without creating one. */
@@ -1002,350 +794,4 @@ export function resolveAttempt(strategyPath: string, output: string): string {
   }
   if (!selected) gate('attempt_not_built', 'No built attempt exists for this strategy.', [strategyPath], 'build a new attempt');
   return fs.realpathSync(selected.path);
-}
-
-async function validateImages(attempt: CheckedAttempt): Promise<JsonObject> {
-  const images = loadRecord(path.join(attempt.path, 'images.json'));
-  const roles = attempt.settings.engine === 'tei' ? ['backend', 'gateway'] : ['backend'];
-  if (Object.keys(images).toSorted().join(',') !== roles.toSorted().join(',')) gate('image_roles_mismatch', 'Recorded images do not cover exactly the native engine roles.');
-  for (const role of roles) {
-    const recorded = asRecord(images[role], 'recorded image');
-    const filename = role === 'backend' ? 'Dockerfile' : 'Dockerfile.gateway';
-    if (recorded.recipe !== buildRecipe(attempt.path, filename)) gate('image_recipe_mismatch', 'Recorded image was built from another recipe.', [attempt.path]);
-    const id = stringValue(recorded.id, 'recorded image ID');
-    const actual = await inspectImage(id);
-    if (actual.Id !== id || asRecord(asRecord(actual.Config).Labels ?? {})['easy-emb.recipe'] !== recorded.recipe) gate('image_identity_mismatch', 'Recorded build identity is absent or no longer matches the recipe.', [attempt.path]);
-  }
-  return images;
-}
-
-function containerNames(attempt: CheckedAttempt, options: ServeOptions): JsonObject {
-  const port = options.port ?? 8080;
-  const bind = options.bind ?? '127.0.0.1';
-  if (!Number.isSafeInteger(port) || port < 1 || port > 65535 || !/^(?:\d{1,3}\.){3}\d{1,3}$/.test(bind) || bind.split('.').some((part) => Number(part) > 255)) gate('invalid_api_binding', 'Provide a valid IPv4 API bind and port in 1..65535.');
-  const name = `easy-emb-${digest(attempt.path).slice(0, 12)}`;
-  return {api: name, backend: attempt.settings.engine === 'tei' ? `${name}-backend` : null,
-    network: attempt.settings.engine === 'tei' ? `${name}-net` : null,
-    base_url: `http://127.0.0.1:${port}`, bind, port};
-}
-
-function checkedContainerNames(attempt: CheckedAttempt): JsonObject {
-  const filename = path.join(attempt.path, 'containers.json');
-  const recorded = loadRecord(filename);
-  const expected = containerNames(attempt, {port: integerValue(recorded.port, 'recorded API port'), bind: stringValue(recorded.bind, 'recorded API bind')});
-  if (digest(recorded) !== digest(expected)) gate('container_binding_changed', 'Recorded resource names must match this exact attempt path and binding.', [filename]);
-  return recorded;
-}
-
-function resourceIdentity(attempt: CheckedAttempt, role: string, info: JsonObject): void {
-  const kind = role === 'network' ? 'network' : 'container';
-  assertOwned(info, attempt, kind);
-  const names = checkedContainerNames(attempt);
-  const name = stringValue(names[role], 'owned resource name');
-  const actualName = stringValue(info.Name, 'observed resource name');
-  if (actualName !== name && actualName !== `/${name}`) gate('resource_name_mismatch', 'Docker returned a resource with another canonical name.', [attempt.path]);
-  const id = stringValue(info.Id, 'resource ID');
-  const filename = path.join(attempt.path, 'resource-identities.json');
-  const ledger = fs.existsSync(filename) ? loadRecord(filename) : {schema: 'embedding-resource-identities/1', attempt_id: attempt.settings.id, strategy_id: attempt.strategy.id, input_identity: attempt.settings.input_identity ?? null, resources: {}};
-  if (ledger.attempt_id !== attempt.settings.id || ledger.strategy_id !== attempt.strategy.id || ledger.input_identity !== (attempt.settings.input_identity ?? null) || (ledger.digest !== undefined && ledger.digest !== digest(omitRecordKeys(ledger, ['digest'])))) gate('resource_identity_record_changed', 'Preserved resource identity does not match this approved attempt.', [filename]);
-  const resources = asRecord(ledger.resources, 'owned resources');
-  const recorded = resources[role] === undefined ? undefined : asRecord(resources[role], 'original resource');
-  const image = kind === 'container' ? stringValue(info.Image, 'container image') : null;
-  if (recorded && (recorded.id !== id || recorded.image !== image || recorded.name !== name)) gate('resource_identity_changed', 'The named Docker resource has been replaced since its original identity was recorded.', [filename]);
-  if (kind === 'container') {
-    const imageRole = role === 'api' && attempt.settings.engine === 'tei' ? 'gateway' : 'backend';
-    const originalImage = asRecord(loadRecord(path.join(attempt.path, 'images.json'))[imageRole], 'original built image');
-    if (image !== originalImage.id) gate('container_image_mismatch', 'The owned container differs from its recorded native build.', [filename]);
-    const priorPath = path.join(attempt.path, `container-${role}.json`);
-    if (!recorded && fs.existsSync(priorPath)) {
-      const prior = asRecord(arrayValue(load(priorPath), 'original container observation')[0]);
-      assertOwned(prior, attempt, 'container');
-      if (prior.Id !== id || prior.Image !== image) gate('resource_identity_changed', 'The named resource differs from the preserved original container observation.', [priorPath]);
-    } else if (!recorded && !creationRecorded(attempt, role, id)) {
-      gate('resource_identity_missing', 'Cleanup or reconciliation requires an original ID in the creation log or preserved container observation.', [priorPath]);
-    }
-  }
-  if (!recorded && kind === 'network' && !creationRecorded(attempt, role, id)) gate('resource_identity_missing', 'Network cleanup or reconciliation requires its original ID in the retained creation log.', [attempt.path]);
-  if (!recorded) {
-    resources[role] = {id, image, name, labels: {'easy-emb.attempt': attempt.settings.id, 'easy-emb.strategy': attempt.strategy.id}, observed_at: now()};
-    ledger.digest = digest(omitRecordKeys(ledger, ['digest']));
-    save(filename, ledger);
-    event(attempt.path, 'resource_identity_preserved', {role, id, image, name});
-  }
-}
-
-function assertResourceUncreated(attempt: CheckedAttempt, role: string): void {
-  const filename = path.join(attempt.path, 'resource-identities.json');
-  if (fs.existsSync(filename) && asRecord(loadRecord(filename).resources)[role] !== undefined) gate('resource_recreation_requires_attempt', 'An original Docker resource disappeared; a replacement must use a new attempt so original IDs remain valid for cleanup and results.', [filename], 'capture and stop remaining owned resources, then render a new attempt');
-}
-
-function overlayModel(attempt: CheckedAttempt): string {
-  if (attempt.settings.engine !== 'tei' || attempt.settings.model_config_overrides === undefined) return '/model';
-  const source = stringValue(attempt.strategy.model_path);
-  const directory = path.join(attempt.path, 'model-overlay');
-  fs.mkdirSync(directory, {recursive: true});
-  for (const name of fs.readdirSync(source)) {
-    if (name === 'config.json') continue;
-    const target = path.join(directory, name);
-    if (fs.lstatSync(directory).isSymbolicLink()) gate('model_overlay_collision', 'Model overlay directory cannot be a symbolic link.', [directory]);
-    try {
-      fs.symlinkSync(`/model/${name}`, target);
-    } catch (error: unknown) {
-      if (!(error instanceof Error)) throw error;
-      if (!('code' in error) || error.code !== 'EEXIST' || fs.readlinkSync(target) !== `/model/${name}`) throw error;
-    }
-  }
-  const model = loadRecord(path.join(source, 'config.json'));
-  Object.assign(model, asRecord(attempt.settings.model_config_overrides));
-  save(path.join(directory, 'config.json'), model);
-  save(path.join(attempt.path, 'model-config-patch.json'), {source, changes: attempt.settings.model_config_overrides, reason: attempt.settings.model_config_override_reason});
-  return '/run/embedding/model-overlay';
-}
-
-function assertRunningContainer(info: JsonObject, attempt: CheckedAttempt, imageId: string, role: string): void {
-  assertOwned(info, attempt, 'container');
-  if (info.Image !== imageId) gate('container_image_mismatch', `Owned ${role} container uses another image.`, [attempt.path]);
-  if (asRecord(info.State).Running !== true) gate('owned_container_stopped', `Owned ${role} container stopped; capture evidence and clean it through its owner before recovery.`, [attempt.path]);
-}
-
-function getLocalJson(address: string, timeoutMs: number): Promise<JsonObject> {
-  return new Promise((resolve, reject) => {
-    const request = http.get(address, {agent: false}, (response) => {
-      let body = '';
-      response.setEncoding('utf8');
-      response.on('data', (chunk: string) => {
-        body += chunk;
-        if (body.length > 2_000_000) request.destroy(new Error('Readiness response exceeds its finite size bound.'));
-      });
-      response.on('end', () => {
-        if (response.statusCode !== 200) {
-          reject(new Error(`Readiness HTTP ${response.statusCode ?? 'unknown'}`));
-          return;
-        }
-        try {
-          const value: unknown = JSON.parse(body);
-          resolve(asRecord(value, 'readiness response'));
-        } catch (error: unknown) {
-          if (!(error instanceof Error)) throw error;
-          reject(error);
-        }
-      });
-      response.on('error', (error: Error) => { reject(error); });
-    });
-    request.setTimeout(timeoutMs, () => { request.destroy(new Error('Readiness request timed out.')); });
-    const deadline = setTimeout(() => { request.destroy(new Error('Readiness request exceeded its wall-clock deadline.')); }, timeoutMs);
-    request.once('close', () => { clearTimeout(deadline); });
-    request.on('error', (error: Error) => { reject(error); });
-  });
-}
-
-/** Starts or reconciles only owned native containers, then verifies bounded readiness. */
-export async function serve(attemptPath: string, options: ServeOptions = {}): Promise<JsonObject> {
-  return withAttemptExecution(attemptPath, 'serve', async (attempt) => {
-    const cfg = attempt.settings;
-    if (['build_failed', 'startup_failed', 'interrupted', 'stopped'].includes(stringValue(cfg.state))) gate('recovery_required', 'A failed or stopped serving process needs a new attempt before starting another process.');
-    const images = await validateImages(attempt);
-    const names = containerNames(attempt, options);
-    const recordPath = path.join(attempt.path, 'containers.json');
-    if (fs.existsSync(recordPath) && digest(loadRecord(recordPath)) !== digest(names)) gate('container_binding_changed', 'Stored resource names and binding differ; stop the owned resources before changing them.', [recordPath]);
-    const runtime = recordClone(attempt.strategy);
-    Object.assign(runtime, {engine: cfg.engine, attempt_id: cfg.id, torch_device: asRecord(cfg.platform).torch_device,
-      dtype: cfg.dtype, backend_timeout_seconds: asRecord(cfg.limits).functional_timeout_seconds});
-    save(path.join(attempt.path, 'runtime.json'), runtime);
-    const modelId = overlayModel(attempt);
-    const mount = ['--mount', `type=bind,src=${attempt.strategy.model_path},dst=/model,readonly`, '--mount', `type=bind,src=${attempt.path},dst=/run/embedding,readonly`];
-    const owner = ['--label', `easy-emb.attempt=${cfg.id}`, '--label', `easy-emb.strategy=${attempt.strategy.id}`];
-    const dockerArgs = strings(asRecord(cfg.platform).docker_args ?? [], 'platform Docker args');
-    const apiName = stringValue(names.api);
-    const backendImage = stringValue(asRecord(images.backend).id);
-    const apiImage = cfg.engine === 'tei' ? stringValue(asRecord(images.gateway).id) : backendImage;
-    const api = await inspectDocker('container', apiName);
-    if (api.status === 'absent') assertResourceUncreated(attempt, 'api');
-    save(recordPath, names);
-    try {
-      if (api.status === 'present') {
-        const info = inspectionPresent(api, apiName);
-        assertRunningContainer(info, attempt, apiImage, 'API');
-        resourceIdentity(attempt, 'api', info);
-        const ports = asRecord(asRecord(info.NetworkSettings).Ports);
-        const bindings = arrayValue(ports['8080/tcp'], 'actual API binding').map((binding) => asRecord(binding));
-        if (!bindings.some((binding) => binding.HostIp === names.bind && binding.HostPort === String(names.port))) gate('container_binding_changed', 'Running API port differs from the stored binding.', [recordPath]);
-        if (typeof names.backend === 'string') {
-          const backend = inspectionPresent(await inspectDocker('container', names.backend), names.backend);
-          assertRunningContainer(backend, attempt, backendImage, 'backend');
-          resourceIdentity(attempt, 'backend', backend);
-          resourceIdentity(attempt, 'network', inspectionPresent(await inspectDocker('network', stringValue(names.network)), 'network'));
-        }
-        event(attempt.path, 'running_container_reconciled', {container: apiName, state: info.State});
-      } else {
-        cfg.state = 'starting';
-        save(path.join(attempt.path, 'settings.yaml'), cfg);
-        invalidateValidation(attempt.path, 'New container process requires fresh verification.');
-        let apiArgs = dockerArgs;
-        if (cfg.engine === 'tei') {
-          const networkName = stringValue(names.network);
-          const network = await inspectDocker('network', networkName);
-          if (network.status === 'absent') {
-            assertResourceUncreated(attempt, 'network');
-            await execute(attempt.path, 'network-create', ['docker', 'network', 'create', ...owner, networkName], 30);
-          }
-          else assertOwned(inspectionPresent(network, networkName), attempt, 'network');
-          resourceIdentity(attempt, 'network', inspectionPresent(await inspectDocker('network', networkName), networkName));
-          const backendName = stringValue(names.backend);
-          const backend = await inspectDocker('container', backendName);
-          if (backend.status === 'absent') {
-            assertResourceUncreated(attempt, 'backend');
-            await execute(attempt.path, 'start-backend', ['docker', 'run', '-d', '--name', backendName, ...owner, '--network', networkName, ...mount, ...dockerArgs, backendImage,
-              '--model-id', modelId, '--port', '80', '--dtype', stringValue(cfg.dtype), '--auto-truncate', 'false', '--max-batch-tokens', String(Math.max(16384, positiveInteger(attempt.strategy.context_window, 'context window'))), '--json-output'], 60);
-          } else assertRunningContainer(inspectionPresent(backend, backendName), attempt, backendImage, 'backend');
-          resourceIdentity(attempt, 'backend', inspectionPresent(await inspectDocker('container', backendName), backendName));
-          apiArgs = ['--network', networkName, '-e', `EMB_TEI_URL=http://${backendName}:80`];
-        }
-        await execute(attempt.path, 'start-api', ['docker', 'run', '-d', '--name', apiName, ...owner, ...apiArgs, ...mount,
-          '-p', `${names.bind}:${names.port}:8080`, '-e', 'HF_HUB_OFFLINE=1', '-e', 'TRANSFORMERS_OFFLINE=1', apiImage, '--config', '/run/embedding/runtime.json'], 60);
-        resourceIdentity(attempt, 'api', inspectionPresent(await inspectDocker('container', apiName), apiName));
-      }
-      const deadline = performance.now() + Math.min(positiveInteger(asRecord(cfg.limits).startup_timeout_seconds, 'startup timeout'), remainingAttemptSeconds(attempt)) * 1000;
-      let last = 'No readiness response';
-      while (performance.now() < deadline) {
-        try {
-          const baseUrl = stringValue(names.base_url);
-          await getLocalJson(`${baseUrl}/health`, Math.min(5000, Math.max(1, deadline - performance.now())));
-          const info = await getLocalJson(`${baseUrl}/info`, Math.min(5000, Math.max(1, deadline - performance.now())));
-          if (info.attempt_id !== cfg.id || info.strategy_id !== attempt.strategy.id || info.context_window !== attempt.strategy.context_window || info.dimensions !== attempt.strategy.dimensions) gate('runtime_identity_mismatch', 'Ready endpoint belongs to another strategy or settings.', [recordPath]);
-          cfg.state = 'serving';
-          delete cfg.error;
-          save(path.join(attempt.path, 'settings.yaml'), cfg);
-          await capture(attempt.path);
-          return {attempt: attempt.path, state: 'serving', base_url: names.base_url};
-        } catch (error: unknown) {
-          if (error instanceof GateError) throw error;
-          last = errorMessage(error);
-        }
-        for (const role of ['api', 'backend']) {
-          if (typeof names[role] !== 'string') continue;
-          const observed = inspectionPresent(await inspectDocker('container', stringValue(names[role])), role);
-          assertRunningContainer(observed, attempt, role === 'api' ? apiImage : backendImage, role);
-        }
-        await delay(Math.min(2000, Math.max(1, deadline - performance.now())));
-      }
-      gate('startup_deadline', `Readiness deadline expired: ${last}`, [attempt.path]);
-    } catch (error: unknown) {
-      retainFailure(attempt, 'serve', error);
-      await capture(attempt.path);
-      throw error;
-    }
-  });
-}
-
-async function captureOwned(attempt: CheckedAttempt): Promise<void> {
-  const containers = checkedContainerNames(attempt);
-  let observedBackend = false;
-  for (const role of ['api', 'backend']) {
-    const name = containers[role];
-    if (typeof name !== 'string') continue;
-    const inspected = await inspectDocker('container', name);
-    if (inspected.status === 'absent') {
-      event(attempt.path, 'capture_resource_absent', {role, name});
-      continue;
-    }
-    const info = inspectionPresent(inspected, name);
-    resourceIdentity(attempt, role, info);
-    save(path.join(attempt.path, `container-${role}.json`), [info]);
-    const logPath = path.join(attempt.path, 'captures', randomUUID(), `container-${role}.log`);
-    const logs = await runCommand(['docker', 'logs', stringValue(info.Id)], {timeoutSeconds: 30, effect: 'observe', logPath});
-    if (logs.code !== 0 || logs.timedOut || logs.spawnError) {
-      event(attempt.path, 'capture_probe_failed', {role, verb: 'logs', returncode: logs.code, stdout: logs.stdout, stderr: logs.stderr, timed_out: logs.timedOut});
-      continue;
-    }
-    fs.copyFileSync(logPath, path.join(attempt.path, `container-${role}.log`));
-    if (role === 'backend') observedBackend = true;
-  }
-  if (observedBackend) collectDeviceEvidence(attempt.path);
-}
-
-/** Captures owned resources under the same lease and campaign phase as its caller. */
-export async function capture(attemptPath: string): Promise<void> {
-  await withAttemptExecution(attemptPath, 'capture', async (attempt) => {
-    if (fs.existsSync(path.join(attempt.path, 'containers.json'))) await captureOwned(attempt);
-  });
-}
-
-/** Freezes corroborating TEI device observations; approval alone is never device proof. */
-export function collectDeviceEvidence(attemptPath: string): void {
-  const cfg = loadRecord(path.join(attemptPath, 'settings.yaml'));
-  if (cfg.engine !== 'tei') return;
-  const strategy = loadRecord(path.join(attemptPath, 'strategy.yaml'));
-  const info = asRecord(arrayValue(load(path.join(attemptPath, 'container-backend.json')))[0], 'backend observation');
-  const labels = labelsOf(info, 'container');
-  if (labels['easy-emb.attempt'] !== cfg.id || labels['easy-emb.strategy'] !== strategy.id || asRecord(info.State).Running !== true || info.Image !== asRecord(loadRecord(path.join(attemptPath, 'images.json')).backend).id) return;
-  const logs = fs.readFileSync(path.join(attemptPath, 'container-backend.log'), 'utf8');
-  const selected = /Starting \w+ model on (Cpu|Cuda)/.exec(logs);
-  let reason: string | undefined;
-  let excerpt: string | undefined;
-  const sources: Array<{name: string; content: string; excerpt: string}> = [];
-  if (selected && (selected[1] === 'Cpu') === (strategy.device === 'cpu')) {
-    reason = 'Observed TEI Candle model device in current backend startup log';
-    excerpt = selected[0];
-  } else if (strategy.device === 'cpu' && !selected) {
-    const filename = path.join(attemptPath, 'build-backend.log');
-    if (!fs.existsSync(filename)) return;
-    const buildLog = fs.readFileSync(filename, 'utf8');
-    const cpuSource = stringValue(asRecord(cfg.platform).tei_image);
-    const ready = logs.split('\n').find((line) => line.includes('"message":"Ready"'));
-    const hostConfig = asRecord(info.HostConfig);
-    const requests = hostConfig.DeviceRequests;
-    const devices = hostConfig.Devices;
-    if (cpuSource.includes(':cpu-') && buildLog.includes(cpuSource) && ready && (requests === null || requests === undefined || arrayValue(requests).length === 0) && (devices === null || devices === undefined || arrayValue(devices).length === 0)) {
-      reason = 'Observed CPU artifact, matching running image, no accelerator assignment and completed model warmup; not a direct provider API probe';
-      excerpt = ready;
-      sources.push({name: 'build.log', content: buildLog, excerpt: cpuSource});
-    }
-  }
-  if (!reason || !excerpt) return;
-  const token = digest({container: info.Id, started: asRecord(info.State).StartedAt ?? null, logs}).slice(0, 20);
-  sources.push({name: 'startup.log', content: logs, excerpt}, {name: 'container.json', content: JSON.stringify(info, null, 2), excerpt: stringValue(info.Image)});
-  const observations: JsonObject[] = [];
-  for (const source of sources) {
-    const relative = path.join('device-observations', token, source.name);
-    fs.mkdirSync(path.dirname(path.join(attemptPath, relative)), {recursive: true});
-    fs.writeFileSync(path.join(attemptPath, relative), source.content);
-    observations.push({file: relative, digest: digest(source.content), excerpt: source.excerpt});
-  }
-  save(path.join(attemptPath, 'device-evidence.json'), {attempt_id: cfg.id, device: strategy.device, observed_at: now(), basis: reason, observations});
-}
-
-/** Removes only this exact attempt's labeled resources after successful ownership probes. */
-export async function stop(attemptPath: string): Promise<JsonObject> {
-  return withAttemptExecution(attemptPath, 'stop', async (attempt) => {
-    const filename = path.join(attempt.path, 'containers.json');
-    if (!fs.existsSync(filename)) return {attempt: attempt.path, state: 'stopped', evidence: 'No containers created'};
-    await captureOwned(attempt);
-    const containers = checkedContainerNames(attempt);
-    const removals: Array<{role: string; id: string}> = [];
-    for (const role of ['api', 'backend']) {
-      const name = containers[role];
-      if (typeof name !== 'string') continue;
-      const observed = await inspectDocker('container', name);
-      if (observed.status === 'absent') continue;
-      const info = inspectionPresent(observed, name);
-      resourceIdentity(attempt, role, info);
-      removals.push({role, id: stringValue(info.Id, 'owned container ID')});
-    }
-    if (typeof containers.network === 'string') {
-      const observed = await inspectDocker('network', containers.network);
-      if (observed.status === 'present') {
-        const info = inspectionPresent(observed, containers.network);
-        resourceIdentity(attempt, 'network', info);
-        removals.push({role: 'network', id: stringValue(info.Id, 'owned network ID')});
-      }
-    }
-    for (const removal of removals) {
-      const argv = removal.role === 'network' ? ['docker', 'network', 'rm', removal.id] : ['docker', 'rm', '-f', removal.id];
-      await execute(attempt.path, removal.role === 'network' ? 'remove-network' : `stop-${removal.role}`, argv, removal.role === 'network' ? 30 : 60);
-    }
-    attempt.settings.state = 'stopped';
-    save(path.join(attempt.path, 'settings.yaml'), attempt.settings);
-    return {attempt: attempt.path, state: 'stopped', evidence: 'retained'};
-  });
 }

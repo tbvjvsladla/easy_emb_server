@@ -4,9 +4,9 @@ import {randomUUID} from 'node:crypto';
 import {cpus, machine, release, type} from 'node:os';
 import {delimiter, join} from 'node:path';
 
-import {GateError, ROOT, asRecord, arrayValue, digest, integerValue, now, numberValue, save, stringValue} from './common.ts';
-import type {JsonObject} from './common.ts';
-import {runCommand} from './processes.ts';
+import {GateError, ROOT, asRecord, arrayValue, digest, integerValue, now, numberValue, save, stringValue} from '../../../harness/common.ts';
+import type {JsonObject} from '../../../harness/common.ts';
+import {runCommand} from '../../../harness/processes.ts';
 
 /** Describes what a probe actually established. */
 export type ProbeStatus = 'observed' | 'absent' | 'tool_missing' | 'query_failed' | 'unavailable' | 'unknown';

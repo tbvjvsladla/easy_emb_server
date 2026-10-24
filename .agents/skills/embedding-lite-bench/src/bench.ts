@@ -6,11 +6,12 @@ import {request as httpsRequest} from 'node:https';
 import {dirname, isAbsolute, join, relative, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
-import {GateError, asRecord, arrayValue, digest, integerValue, load, loadRecord, now, numberValue, omitRecordKeys, save, sha256Bytes, stringValue} from './common.ts';
-import type {JsonObject} from './common.ts';
-import {capture, compatibility, event, remainingAttemptSeconds, validateAttemptIdentity, withAttemptExecution} from './attempts.ts';
-import type {CheckedAttempt} from './attempts.ts';
-import {findExecutable, probeCommand} from './hardware.ts';
+import {GateError, asRecord, arrayValue, digest, integerValue, load, loadRecord, now, numberValue, omitRecordKeys, save, sha256Bytes, stringValue} from '../../../harness/common.ts';
+import type {JsonObject} from '../../../harness/common.ts';
+import {compatibility, event, remainingAttemptSeconds, validateAttemptIdentity, withAttemptExecution} from '../../embedding-explorer/src/attempts.ts';
+import {capture} from '../../embedding-explorer/src/serving.ts';
+import type {CheckedAttempt} from '../../embedding-explorer/src/attempts.ts';
+import {findExecutable, probeCommand} from '../../terraforming-node/src/hardware.ts';
 
 const SOURCE_PATH = fileURLToPath(import.meta.url);
 const MUTABLE_SETTINGS = ['state', 'error', 'previous_compatible_pass'];

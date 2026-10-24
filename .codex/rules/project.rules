@@ -1,45 +1,59 @@
-# Native fixed TypeScript entrypoints. Strategy HITL remains mandatory.
+# Role-owned fixed TypeScript entrypoints. Strategy HITL remains mandatory.
 prefix_rule(
-    pattern = ["node", "tools/verify.ts"],
+    pattern = ["node",".agents/validation/verify.ts"],
     decision = "allow",
     justification = "Fixed typecheck, lint, harness and wiki tests with recorded logs.",
-    match = ["node tools/verify.ts", "node tools/verify.ts --suite harness"],
-    not_match = ["node tools/other.ts", "node -e 'process.exit()'"],
+    match = ["node .agents/validation/verify.ts","node .agents/validation/verify.ts --suite harness"],
+    not_match = ["node -e process.exit()"],
 )
 prefix_rule(
-    pattern = ["node", "tools/embctl.ts", ["init", "inventory", "inspect", "render", "build", "serve", "bench", "capture", "report", "stop"]],
+    pattern = ["node",".agents/skills/terraforming-node/src/cli.ts","init"],
     decision = "allow",
-    justification = "Approved lifecycle guarded by receipts, immutable inputs and resource ownership.",
-    match = ["node tools/embctl.ts inspect --model /path/to/model", "node tools/embctl.ts build --strategy output/model/strategies/approved.yaml"],
-    not_match = ["node tools/embctl.ts approve --model example", "node -e 'process.exit()'"],
+    justification = "Terraforming-owned bounded host observation.",
+    match = ["node .agents/skills/terraforming-node/src/cli.ts init --out manifest.yaml"],
+    not_match = ["node .agents/skills/terraforming-node/src/cli.ts serve","node .agents/skills/terraforming-node/src/cli.ts arbitrary"],
 )
 prefix_rule(
-    pattern = ["node", "tools/embctl.ts", "upstream", ["prepare", "check"]],
+    pattern = ["node",".agents/skills/embedding-upstream/src/cli.ts",["prepare","check","build"]],
     decision = "allow",
-    justification = "Official latest stable source preparation and immutable input verification.",
-    match = ["node tools/embctl.ts upstream prepare", "node tools/embctl.ts upstream check"],
-    not_match = ["node tools/embctl.ts upstream arbitrary"],
+    justification = "Upstream-owned source preparation and receipt-checked image builds.",
+    match = ["node .agents/skills/embedding-upstream/src/cli.ts prepare","node .agents/skills/embedding-upstream/src/cli.ts build --strategy output/model/strategies/approved.yaml"],
+    not_match = ["node .agents/skills/embedding-upstream/src/cli.ts serve","node .agents/skills/embedding-upstream/src/cli.ts arbitrary"],
 )
 prefix_rule(
-    pattern = ["node", "tools/embctl.ts", "campaign", ["init", "status", "step", "run", "attach", "retry", "resolve", "reopen", "report"]],
+    pattern = ["node",".agents/skills/embedding-explorer/src/cli.ts",["inventory","inspect","render","serve","capture","stop"]],
+    decision = "allow",
+    justification = "Explorer-owned approved lifecycle guarded by receipts and ownership.",
+    match = ["node .agents/skills/embedding-explorer/src/cli.ts inspect --model /path/to/model","node .agents/skills/embedding-explorer/src/cli.ts serve --attempt output/model/attempts/example"],
+    not_match = ["node .agents/skills/embedding-explorer/src/cli.ts approve --model example","node .agents/skills/embedding-explorer/src/cli.ts build"],
+)
+prefix_rule(
+    pattern = ["node",".agents/skills/embedding-lite-bench/src/cli.ts",["bench","report"]],
+    decision = "allow",
+    justification = "Lite-bench-owned bounded measurement and current evidence reports.",
+    match = ["node .agents/skills/embedding-lite-bench/src/cli.ts bench --attempt output/model/attempts/example","node .agents/skills/embedding-lite-bench/src/cli.ts report"],
+    not_match = ["node .agents/skills/embedding-lite-bench/src/cli.ts serve","node .agents/skills/embedding-lite-bench/src/cli.ts arbitrary"],
+)
+prefix_rule(
+    pattern = ["node",".agents/skills/embedding-explorer/src/cli.ts","campaign",["init","status","step","run","attach","retry","resolve","reopen","report"]],
     decision = "allow",
     justification = "Approved checkpoint and bounded recovery entrypoints; no manufactured user answer.",
-    match = ["node tools/embctl.ts campaign run --campaign output/campaigns/example --timeout 600"],
-    not_match = ["node tools/embctl.ts campaign answer --campaign example --answer answer.json", "node tools/embctl.ts campaign _work --campaign example", "node tools/embctl.ts approve --model example"],
+    match = ["node .agents/skills/embedding-explorer/src/cli.ts campaign run --campaign output/campaigns/example --timeout 600"],
+    not_match = ["node .agents/skills/embedding-explorer/src/cli.ts campaign answer --campaign example --answer answer.json","node .agents/skills/embedding-explorer/src/cli.ts campaign _work --campaign example","node .agents/skills/embedding-explorer/src/cli.ts approve --model example"],
 )
 prefix_rule(
-    pattern = ["node", "tools/campaign_e2e.ts", "--mode", ["freeze", "discovery", "campaign", "continuity"]],
+    pattern = ["node",".agents/validation/campaign_e2e.ts","--mode",["freeze","discovery","campaign","continuity"]],
     decision = "allow",
-    justification = "Fixed actual Luna/none evaluation, approved receipts and owned caller interruption.",
-    match = ["node tools/campaign_e2e.ts --mode discovery --evaluation output/evaluations/example", "node tools/campaign_e2e.ts --mode continuity --evaluation output/evaluations/example --campaign output/campaigns/example"],
-    not_match = ["node tools/campaign_e2e.ts --mode arbitrary", "codex exec"],
+    justification = "Fixed actual Luna/none evaluation with approved receipts and owned caller interruption.",
+    match = ["node .agents/validation/campaign_e2e.ts --mode discovery --evaluation output/evaluations/example","node .agents/validation/campaign_e2e.ts --mode continuity --evaluation output/evaluations/example --campaign output/campaigns/example"],
+    not_match = ["node .agents/validation/campaign_e2e.ts --mode arbitrary","codex exec"],
 )
 prefix_rule(
-    pattern = ["node", "tools/review.ts"],
+    pattern = ["node",".agents/validation/review.ts"],
     decision = "allow",
-    justification = "Fixed highest-model local source review; extra CLI arguments are rejected.",
-    match = ["node tools/review.ts"],
-    not_match = ["codex review --uncommitted", "node tools/other.ts"],
+    justification = "Fixed highest-model source review; extra CLI arguments are rejected.",
+    match = ["node .agents/validation/review.ts"],
+    not_match = ["codex review --uncommitted","node .agents/validation/other.ts"],
 )
 prefix_rule(
     pattern = ["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"],

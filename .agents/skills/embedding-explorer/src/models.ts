@@ -2,9 +2,11 @@
 import {existsSync, readFileSync, realpathSync} from 'node:fs';
 import {basename, isAbsolute, join, relative, resolve} from 'node:path';
 import {homedir} from 'node:os';
-import {GateError, ROOT, absolutePath, arrayValue, asRecord, digest, fingerprintModel, integerValue, load, loadRecord, now, omitRecordKeys, optionalString, parseJson, save, sha256Bytes, stringValue} from './common.ts';
-import type {JsonObject, ModelFingerprint} from './common.ts';
-import {parseManifest} from './hardware.ts';
+import {GateError, ROOT, absolutePath, arrayValue, asRecord, digest, integerValue, load, loadRecord, now, omitRecordKeys, optionalString, parseJson, save, sha256Bytes, stringValue} from '../../../harness/common.ts';
+import type {JsonObject} from '../../../harness/common.ts';
+import {fingerprintModel} from './model-fingerprint.ts';
+import type {ModelFingerprint} from './model-fingerprint.ts';
+import {parseManifest} from '../../terraforming-node/src/hardware.ts';
 
 /** The only human-owned serving-device axis. */
 export type Device = 'cpu' | 'gpu';

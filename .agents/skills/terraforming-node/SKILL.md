@@ -7,7 +7,10 @@ description: "Scan this node and initialize or refresh manifest.yaml for embeddi
 
 단일 노드의 HW 관측과 manifest를 소유한다. [공통 게이트 계약](../../../rules/harness.md)을 따른다. 초기화 또는 환경 변경 때 사용한다.
 
-1. `node tools/embctl.ts init --out manifest.yaml`을 실행한다. 모델 저장소 디스크를 관측하려면 `--model-root <경로>`를 추가한다.
+
+실행 진입점은 [src/cli.ts](src/cli.ts)이며 `init`만 담당한다. 실제 관측·플랫폼 선택·현재 환경 대조는 [src/hardware.ts](src/hardware.ts)에 있다.
+
+1. `node .agents/skills/terraforming-node/src/cli.ts init --out manifest.yaml`을 실행한다. 모델 저장소 디스크를 관측하려면 `--model-root <경로>`를 추가한다.
 2. manifest 원문에서 관측값·출처·상태를 확인한다. CPU-only는 유효하다. 장치 없음·도구 없음·관측 실패·미확인을 구별한다.
 3. 모델 조사와 HITL을 explorer에 연결한다. 빌드/서빙은 승인 당시 환경과 현재 HW 적용성 게이트를 다시 통과한다.
 

@@ -1,14 +1,16 @@
 /** Assesses the existing same-device ST recovery route from immutable local evidence. */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import {GateError, absolutePath, arrayValue, asRecord, digest, loadRecord, now, sha256Bytes, stringValue} from './common.ts';
-import type {JsonObject} from './common.ts';
-import {backendBuildInputs, campaignFailures, chooseDtype, nativeAssets, runtimeSupport, validateAttemptIdentityForCleanup} from './attempts.ts';
-import type {CheckedAttempt, NativeAssets, RuntimeSupport} from './attempts.ts';
+import {GateError, absolutePath, arrayValue, asRecord, digest, loadRecord, now, sha256Bytes, stringValue} from '../../../harness/common.ts';
+import type {JsonObject} from '../../../harness/common.ts';
+import {campaignFailures, chooseDtype, runtimeSupport, validateAttemptIdentityForCleanup} from './attempts.ts';
+import {backendBuildInputs, nativeAssets} from '../../embedding-upstream/src/recipes.ts';
+import type {CheckedAttempt, RuntimeSupport} from './attempts.ts';
+import type {NativeAssets} from '../../embedding-upstream/src/recipes.ts';
 import {checkedStrategyForCleanup} from './models.ts';
-import {selectPlatform} from './hardware.ts';
-import {validateFrozenSources} from './upstream.ts';
-import type {ReleaseSnapshot} from './upstream.ts';
+import {selectPlatform} from '../../terraforming-node/src/hardware.ts';
+import {validateFrozenSources} from '../../embedding-upstream/src/upstream.ts';
+import type {ReleaseSnapshot} from '../../embedding-upstream/src/upstream.ts';
 
 /** Freezes the policy counters at the handoff time, including failed preparations. */
 export interface RecoveryBudget {

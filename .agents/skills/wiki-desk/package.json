@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Project knowledge desk (OKF 0.2 pointer library) - TypeScript, Node 24, zero runtime dependencies",
   "scripts": {
-    "test": "node ../../../tools/verify.ts --suite wiki"
+    "test": "node ../../validation/verify.ts --suite wiki"
   },
   "engines": {
     "node": ">=24"

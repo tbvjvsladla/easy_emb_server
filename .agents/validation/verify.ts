@@ -3,14 +3,16 @@
 import {globSync} from 'node:fs';
 import {join} from 'node:path';
 import {parseArgs} from 'node:util';
-import {ROOT, now, save} from './embedding/common.ts';
-import type {JsonObject} from './embedding/common.ts';
-import {runCommand} from './embedding/processes.ts';
+import {ROOT, now, save} from '../harness/common.ts';
+import type {JsonObject} from '../harness/common.ts';
+import {runCommand} from '../harness/processes.ts';
 
 const args = parseArgs({options: {suite: {type: 'string', default: 'all'}}, strict: true, allowPositionals: false});
 const commands: {[key: string]: string[]} = {
   typecheck: [process.execPath, join(ROOT, 'node_modules/typescript/bin/tsc'), '--noEmit'],
-  lint: [process.execPath, join(ROOT, 'node_modules/oxlint/bin/oxlint'), '-c', 'oxlintrc.jsonc', 'tools'],
+  lint: [process.execPath, join(ROOT, 'node_modules/oxlint/bin/oxlint'), '-c', 'oxlintrc.jsonc',
+    '.agents/harness', '.agents/validation', '.agents/skills/terraforming-node/src', '.agents/skills/embedding-upstream/src',
+    '.agents/skills/embedding-explorer/src', '.agents/skills/embedding-lite-bench/src'],
   // Tests exercise the actual single-host lease; keep those files sequential too.
   harness: [process.execPath, '--test', '--test-concurrency=1', ...globSync(join(ROOT, 'tests/ts-*.test.ts')).toSorted()],
   wiki: [process.execPath, '--test', ...globSync(join(ROOT, '.agents/skills/wiki-desk/tests/*.test.ts')).toSorted()],

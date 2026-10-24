@@ -170,7 +170,7 @@ export function assertPersistentExecutionEnvironment(): void {
   const argv0 = command.subarray(0, separator < 0 ? command.length : separator).toString('utf8');
   if (path.basename(argv0) === 'codex-linux-sandbox') {
     throw new GateError('EPHEMERAL_EXECUTION_NAMESPACE', 'The observed PID 1 argv[0] is codex-linux-sandbox; its temporary namespace cannot retain a detached campaign worker.',
-      {evidence: ['/proc/1/cmdline'], nextAction: 'Use the approved node tools/embctl.ts campaign step/run entrypoint as a plain shell command without extra quotes around its executable or fixed arguments. Preserve existing permission rules; restart the trusted Codex session if its project rules changed.', retryable: true});
+      {evidence: ['/proc/1/cmdline'], nextAction: 'Use the approved node .agents/skills/embedding-explorer/src/cli.ts campaign step/run entrypoint as a plain shell command without extra quotes around its executable or fixed arguments. Preserve existing permission rules; restart the trusted Codex session if its project rules changed.', retryable: true});
   }
 }
 

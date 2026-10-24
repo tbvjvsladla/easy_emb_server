@@ -10,16 +10,16 @@ import {pathToFileURL} from 'node:url';
 import {parseArgs} from 'node:util';
 import {setTimeout as delay} from 'node:timers/promises';
 import {ROOT, GateError, absolutePath, arrayValue, asRecord, digest, integerValue, load,
-  loadRecord, now, optionalString, parseJson, save, sha256Bytes, stringValue} from './embedding/common.ts';
-import type {JsonObject} from './embedding/common.ts';
-import {alive, identity, observeProcess, runCommand, signalOwnedGroup} from './embedding/processes.ts';
-import type {ProcessIdentity} from './embedding/processes.ts';
-import * as campaign from './embedding/campaign.ts';
-import {validateResult} from './embedding/bench.ts';
-import {checkedStrategy} from './embedding/models.ts';
+  loadRecord, now, optionalString, parseJson, save, sha256Bytes, stringValue} from '../harness/common.ts';
+import type {JsonObject} from '../harness/common.ts';
+import {alive, identity, observeProcess, runCommand, signalOwnedGroup} from '../harness/processes.ts';
+import type {ProcessIdentity} from '../harness/processes.ts';
+import * as campaign from '../skills/embedding-explorer/src/campaign.ts';
+import {validateResult} from '../skills/embedding-lite-bench/src/bench.ts';
+import {checkedStrategy} from '../skills/embedding-explorer/src/models.ts';
 
-/** Keeps the three separately measured groups distinct from shared conditions. */
-export type EvaluationGroup = 'full36' | 'representative6' | 'strict3';
+/** Keeps separately measured groups distinct even when they share approved conditions. */
+export type EvaluationGroup = 'full36' | 'representative6' | 'strict3' | 'difficult6';
 
 /** Binds a condition to the original approved tuple and its acceptance rule. */
 export interface CoverageCondition extends JsonObject {
@@ -47,14 +47,29 @@ interface EvaluationContext {
 
 const MODEL = 'gpt-6-luna';
 const EFFORT = 'none';
-const SKILLS = ['terraforming-node', 'embedding-upstream', 'embedding-explorer', 'embedding-lite-bench']
-  .map((name) => `.agents/skills/${name}/SKILL.md`);
+interface SkillRuntime {
+  name: string;
+  implementationFiles: string[];
+}
+
+const SKILL_RUNTIMES: SkillRuntime[] = [
+  {name: 'terraforming-node', implementationFiles: ['hardware.ts']},
+  {name: 'embedding-upstream', implementationFiles: ['upstream.ts', 'recipes.ts', 'build.ts']},
+  {name: 'embedding-explorer', implementationFiles: ['models.ts', 'model-fingerprint.ts', 'attempts.ts', 'serving.ts', 'campaign.ts', 'recovery.ts']},
+  {name: 'embedding-lite-bench', implementationFiles: ['bench.ts']},
+];
+const SKILLS = SKILL_RUNTIMES.map((skill) => `.agents/skills/${skill.name}/SKILL.md`);
+const CAMPAIGN_CLI = '.agents/skills/embedding-explorer/src/cli.ts';
 const BASELINE = path.join(ROOT, 'output/e2e/nas-all-defaults-261022');
 const REPRESENTATIVE = ['multilingual-e5-small-cpu', 'multilingual-e5-small-gpu',
   'multilingual-e5-base-cpu', 'multilingual-e5-base-gpu', 'embeddinggemma-300m-cpu', 'embeddinggemma-300m-gpu'];
 const STRICT = ['multilingual-e5-small-cpu', 'multilingual-e5-small-gpu', 'multilingual-e5-base-cpu'];
+const DIFFICULT = ['Qwen3-Embedding-4B-cpu', 'Qwen3-Embedding-4B-gpu',
+  'Qwen3-VL-Embedding-2B-cpu', 'Qwen3-VL-Embedding-2B-gpu',
+  'pplx-embed-context-v1-4b-cpu', 'pplx-embed-context-v1-4b-gpu'];
 const SOURCE_POLICY = {schema: 'embedding-evaluation-inputs/1',
-  directories: ['tools', 'runtime', 'config', 'rules', '.agents', '.codex', 'campaigns'],
+  directories: ['.agents/harness', '.agents/validation', ...SKILL_RUNTIMES.map((skill) => `.agents/skills/${skill.name}`),
+    'runtime', 'config', 'rules', '.codex', 'campaigns'],
   files: ['AGENTS.md', 'README.md', 'package.json', 'package-lock.json', 'tsconfig.json', 'oxlintrc.jsonc'],
   exclusion: 'Result publication under docs/report, generated output and unrelated assets are not execution inputs.'};
 
@@ -68,8 +83,8 @@ function records(value: unknown, label = 'records'): JsonObject[] {
 }
 
 function groupValue(value: unknown): EvaluationGroup {
-  if (value === 'full36' || value === 'representative6' || value === 'strict3') return value;
-  throw new GateError('EVALUATION_GROUP', 'Choose full36, representative6 or strict3.');
+  if (value === 'full36' || value === 'representative6' || value === 'strict3' || value === 'difficult6') return value;
+  throw new GateError('EVALUATION_GROUP', 'Choose full36, representative6, strict3 or difficult6.');
 }
 
 /** Hashes tracked/nonignored execution and policy inputs, including new harness files. */
@@ -122,7 +137,8 @@ export async function freeze(directory: string, upstreamSnapshot: string): Promi
     baseline_results: frozenArtifact(path.join(BASELINE, 'results.json')),
     codex_version: version.stdout.trim(), node_version: process.version,
     acceptance: {full36: '34 original PASS conditions need new PASS; only original nomic-xlm CPU/GPU may remain evidenced BLOCKED',
-      representative6: 'Six separate new measured PASS results', strict3: 'Three new PASS results with actual caller death and distinct real Luna resume'},
+      representative6: 'Six separate new measured PASS results', strict3: 'Three new PASS results with actual caller death and distinct real Luna resume',
+      difficult6: 'Qwen3-Embedding-4B, Qwen3-VL-Embedding-2B and pplx-embed-context-v1-4b on both CPU/GPU, each original approved tuple with a separate new measured PASS'},
     control_policy: 'Actual gpt-6-luna / none only; preserve project permissions; no model, mock, or script fallback; source changes invalidate this evaluation.'};
   save(path.join(directory, 'evaluation.json'), artifact);
   return artifact;
@@ -187,7 +203,7 @@ function outsideAssistance(toolName: string, command: string): string | null {
     return 'LLM delegation or external agent assistance was invoked';
   }
   if (/(?:^|(?:&&|\|\||[;|\n])\s*|(?:-c|-lc)\s+["'])\s*(?:[\w./-]+\/)?(?:codex|claude(?:-sub-router)?|gemini|ollama|aider)\s+(?:exec|review|run|chat|-p|--print|--model|-m)/iu.test(command) ||
-      /(?:^|(?:&&|\|\||[;|\n])\s*|(?:-c|-lc)\s+["'])\s*(?:[\w./-]+\/)?node\s+(?:[^\s]+\/)?tools\/(?:review|campaign_e2e)\.ts\b/u.test(command) ||
+      /(?:^|(?:&&|\|\||[;|\n])\s*|(?:-c|-lc)\s+["'])\s*(?:[\w./-]+\/)?node\s+(?:[^\s]+\/)?(?:tools|\.agents\/validation)\/(?:review|campaign_e2e)\.ts\b/u.test(command) ||
       /(?:spawn|spawnSync|execFile|execFileSync)\s*\(\s*["'](?:codex|claude|gemini|ollama)["']/u.test(command) ||
       /(?:api\.openai\.com|api\.anthropic\.com|generativelanguage\.googleapis\.com|openrouter\.ai)\/(?:v1|v1beta|api)\b/iu.test(command)) {
     return 'An additional model/provider control invocation was observed';
@@ -356,27 +372,82 @@ function responseSchema(fields: JsonObject): JsonObject {
   return {type: 'object', properties: fields, required: Object.keys(fields), additionalProperties: false};
 }
 
-/** Runs real read-only discovery of all four skills and the TypeScript entrypoint. */
+/** Checks that discovered skill entrypoints and domain implementations are real packaged files. */
+export function validateSkillDiscovery(value: unknown, workspace = ROOT): JsonObject {
+  const reasons: string[] = [];
+  const evidence: JsonObject[] = [];
+  try {
+    const response = asRecord(value, 'skill discovery response');
+    const skills = arrayValue(response.skill_paths, 'skill instruction paths').map((item) => stringValue(item));
+    if (response.workspace !== workspace || response.context_file !== 'AGENTS.md' ||
+        response.campaign_contract !== 'campaigns/README.md' || response.checkpoint_root !== 'output/campaigns' ||
+        response.entrypoint !== CAMPAIGN_CLI) reasons.push('Workspace, campaign contract or explorer campaign CLI does not match the package.');
+    if (skills.length !== SKILLS.length || new Set(skills).size !== SKILLS.length || !SKILLS.every((filename) => skills.includes(filename))) {
+      reasons.push('Discovery must identify each of the four task skill instructions exactly once.');
+    }
+    const runtimes = records(response.skill_runtimes, 'skill runtime mappings');
+    const names = runtimes.map((runtime) => stringValue(runtime.skill, 'skill name'));
+    if (runtimes.length !== SKILL_RUNTIMES.length || new Set(names).size !== SKILL_RUNTIMES.length ||
+        !SKILL_RUNTIMES.every((skill) => names.includes(skill.name))) reasons.push('Discovery must identify all four distinct skill runtimes.');
+    for (const skill of SKILL_RUNTIMES) {
+      const runtime = runtimes.find((item) => item.skill === skill.name);
+      if (!runtime) continue;
+      const prefix = `.agents/skills/${skill.name}/src/`;
+      const entrypoint = `${prefix}cli.ts`;
+      const implementations = arrayValue(runtime.implementation_files, 'implementation files').map((item) => stringValue(item));
+      const required = skill.implementationFiles.map((filename) => `${prefix}${filename}`);
+      if (runtime.entrypoint !== entrypoint || implementations.length === 0 || new Set(implementations).size !== implementations.length ||
+          !required.every((filename) => implementations.includes(filename)) || implementations.some((filename) =>
+            !filename.startsWith(prefix) || !filename.endsWith('.ts') || path.posix.normalize(filename) !== filename ||
+            filename.includes('\\') || filename === entrypoint)) {
+        reasons.push(`${skill.name}: the CLI and required role implementations must belong to this skill.`);
+        continue;
+      }
+      const files = [`.agents/skills/${skill.name}/SKILL.md`, entrypoint, ...implementations];
+      const artifacts: JsonObject[] = [];
+      for (const relative of files) {
+        const filename = path.join(workspace, relative);
+        if (!fs.existsSync(filename) || !fs.lstatSync(filename).isFile()) {
+          reasons.push(`${skill.name}: missing regular packaged file ${relative}`);
+          continue;
+        }
+        const bytes = fs.readFileSync(filename);
+        if (bytes.length === 0) reasons.push(`${skill.name}: empty packaged file ${relative}`);
+        artifacts.push({path: relative, sha256: sha256Bytes(bytes)});
+      }
+      evidence.push({skill: skill.name, entrypoint, implementation_files: implementations, artifacts});
+    }
+  } catch (error: unknown) {
+    if (!(error instanceof Error)) throw error;
+    reasons.push(error.message);
+  }
+  return {valid: reasons.length === 0, reasons, skills: evidence};
+}
+
+/** Runs real read-only discovery of the four skill CLIs and their domain implementations. */
 export async function discovery(context: EvaluationContext, timeout: number): Promise<JsonObject> {
   const out = path.join(context.directory, `discovery-${Date.now()}-${randomUUID().slice(0, 8)}`);
   fs.mkdirSync(out);
   const schema = responseSchema({workspace: {type: 'string'}, context_file: {type: 'string'}, campaign_contract: {type: 'string'},
-    checkpoint_root: {type: 'string'}, entrypoint: {type: 'string'}, skill_paths: {type: 'array', items: {type: 'string'}}});
+    checkpoint_root: {type: 'string'}, entrypoint: {type: 'string'}, skill_paths: {type: 'array', items: {type: 'string'}},
+    skill_runtimes: {type: 'array', items: responseSchema({skill: {type: 'string'}, entrypoint: {type: 'string'},
+      implementation_files: {type: 'array', items: {type: 'string'}}})}});
   const prompt = 'Read AGENTS.md, campaigns/README.md and the four task skill instructions identified by AGENTS.md. ' +
     'This is read-only discovery: do not run models or alter files/configuration. Return the absolute workspace path, context filename, ' +
-    'campaign contract path, the parent directory containing campaign folders, the native host CLI entrypoint path and all four skill paths. ' +
+    'campaign contract path, the parent directory containing campaign folders, the explorer skill campaign CLI entrypoint and all four skill paths. ' +
+    'For skill_runtimes, inspect each skill source and report its skill name, dedicated CLI path and the implementation files that own its actual behavior. ' +
+    'Include hardware observation for terraforming; release/dependency selection, recipes and build execution for upstream; model/approval and model fingerprinting, attempt generation, serving, campaign and recovery for explorer; functional and measured result validation for lite bench. ' +
+    'List those core implementations in implementation_files; additional source helpers owned by that same skill may be included. A CLI wrapper or shared transport helper alone is insufficient. ' +
     'For checkpoint_root return only that parent directory, with no campaign ID, placeholder, trailing slash or checkpoint.json filename. Use repository-relative paths except workspace. ' +
     'Perform this yourself as the selected Luna/none model. Do not change model/provider or delegate to another LLM, subagent, external assistant, router or nested Codex invocation.';
   const invoked = await launch(out, 'call', prompt, true, schema, Math.min(timeout, 600));
   const control = await finish(invoked);
-  const response = control.response ? asRecord(control.response) : {};
-  const skills = response.skill_paths ? arrayValue(response.skill_paths).map((item) => stringValue(item)) : [];
+  const validation = validateSkillDiscovery(control.response ?? {});
   const sourceUnchanged = await unchanged(context);
   const passed = control.returncode === 0 && control.runtime_verified === true && control.independence_verified === true && sourceUnchanged &&
-    response.workspace === ROOT && response.context_file === 'AGENTS.md' && response.campaign_contract === 'campaigns/README.md' &&
-    response.checkpoint_root === 'output/campaigns' && response.entrypoint === 'tools/embctl.ts' &&
-    skills.length === SKILLS.length && SKILLS.every((filename) => skills.includes(filename));
-  const result = {passed, control, source_unchanged: sourceUnchanged, evaluation_id: context.frozen.evaluation_id, evidence_kind: 'real-codex-cli-discovery'};
+    validation.valid === true;
+  const result = {passed, control, discovery_validation: validation, source_unchanged: sourceUnchanged,
+    evaluation_id: context.frozen.evaluation_id, evidence_kind: 'real-codex-cli-discovery'};
   save(path.join(out, 'result.json'), result);
   if (passed) save(path.join(context.directory, 'discovery.json'), {passed, evidence: path.join(out, 'result.json'), evaluation_id: context.frozen.evaluation_id});
   return result;
@@ -394,7 +465,7 @@ export function validateCoverage(value: unknown, group: EvaluationGroup): Covera
       result.some((item) => !['cpu', 'gpu'].includes(item.device) || item.context_window <= 0 || item.dimensions <= 0)) {
     throw new GateError('EVALUATION_COVERAGE', 'Coverage needs unique condition IDs and valid approved tuples.');
   }
-  const expected = group === 'full36' ? 36 : group === 'representative6' ? 6 : 3;
+  const expected = group === 'full36' ? 36 : group === 'strict3' ? 3 : 6;
   if (result.length !== expected) throw new GateError('EVALUATION_COVERAGE', `Group ${group} requires exactly ${expected} declared conditions.`);
   const permitted = new Set(['nomic-xlm-2048-cpu', 'nomic-xlm-2048-gpu']);
   for (const item of result) {
@@ -406,14 +477,19 @@ export function validateCoverage(value: unknown, group: EvaluationGroup): Covera
   }
   const ids = result.map((item) => item.condition_id);
   if (group === 'representative6' && digest(ids.toSorted()) !== digest(REPRESENTATIVE.toSorted())) throw new GateError('EVALUATION_COVERAGE', 'Representative coverage must be the named three models on CPU/GPU.');
+  if (group === 'difficult6' && (digest(ids.toSorted()) !== digest(DIFFICULT.toSorted()) || result.some((item) =>
+    item.condition_id !== `${item.model}-${item.device}`))) {
+    throw new GateError('EVALUATION_COVERAGE', 'Difficult coverage requires Qwen3-Embedding-4B, Qwen3-VL-Embedding-2B and pplx-embed-context-v1-4b on both CPU/GPU.');
+  }
   if (group === 'strict3' && digest(ids) !== digest(STRICT)) throw new GateError('EVALUATION_COVERAGE', 'Continuity order is small-cpu, small-gpu, base-cpu.');
   if (group === 'full36' && result.filter((item) => item.prior_outcome === 'BLOCKED').length !== 2) throw new GateError('EVALUATION_COVERAGE', 'Full coverage must preserve the original 34 PASS and two blocked conditions.');
   return result;
 }
 
-function compareBaseline(context: EvaluationContext, conditions: CoverageCondition[]): void {
-  const baseline = records(load(stringValue(asRecord(context.frozen.baseline_receipts).path)));
-  const results = records(loadRecord(stringValue(asRecord(context.frozen.baseline_results).path)).cells);
+/** Enforces the original approved tuple and historical outcome for each named condition. */
+export function validateBaselineCoverage(conditions: readonly CoverageCondition[], receipts: unknown, resultDocument: unknown): void {
+  const baseline = records(receipts, 'original approval inventory');
+  const results = records(asRecord(resultDocument, 'original result inventory').cells);
   for (const condition of conditions) {
     const receipt = baseline.find((entry) => entry.id === condition.condition_id);
     const outcome = results.find((entry) => entry.cell === condition.condition_id);
@@ -423,6 +499,11 @@ function compareBaseline(context: EvaluationContext, conditions: CoverageConditi
       throw new GateError('EVALUATION_BASELINE', `Condition ${condition.condition_id} differs from the frozen original matrix.`);
     }
   }
+}
+
+function compareBaseline(context: EvaluationContext, conditions: CoverageCondition[]): void {
+  validateBaselineCoverage(conditions, load(stringValue(asRecord(context.frozen.baseline_receipts).path)),
+    loadRecord(stringValue(asRecord(context.frozen.baseline_results).path)));
 }
 
 async function registerGroup(context: EvaluationContext, base: string, group: EvaluationGroup, coveragePath: string): Promise<{out: string; conditions: CoverageCondition[]}> {
@@ -498,8 +579,8 @@ export function shellCommand(argv: readonly string[]): string {
 }
 
 function campaignPrompt(base: string, timeout: number): string {
-  const argv = [process.execPath, path.join(ROOT, 'tools/embctl.ts'), 'campaign', 'run', '--campaign', absolutePath(base), '--timeout', String(Math.max(1, Math.floor(timeout - 60)))];
-  const statusArgv = [process.execPath, path.join(ROOT, 'tools/embctl.ts'), 'campaign', 'status', '--campaign', absolutePath(base)];
+  const argv = [process.execPath, path.join(ROOT, CAMPAIGN_CLI), 'campaign', 'run', '--campaign', absolutePath(base), '--timeout', String(Math.max(1, Math.floor(timeout - 60)))];
+  const statusArgv = [process.execPath, path.join(ROOT, CAMPAIGN_CLI), 'campaign', 'status', '--campaign', absolutePath(base)];
   return 'Read AGENTS.md and campaigns/README.md. Operate this already declared campaign using its actual approved receipts and project skills. ' +
     `In working directory ${ROOT}, read its canonical status with this exact shell command:\n${shellCommand(statusArgv)}\n` +
     `Then continue with this exact shell command:\n${shellCommand(argv)}\n` +
@@ -598,11 +679,11 @@ export async function runCampaign(context: EvaluationContext, base: string, grou
 
 /** Matches only the exact recorded TypeScript campaign coordinator before signalling. */
 export function coordinatorMatches(argv: readonly string[], cwd: string, base: string): boolean {
-  const index = argv.findIndex((arg) => path.basename(arg) === 'embctl.ts');
+  const index = argv.findIndex((arg) => path.basename(arg) === 'cli.ts');
   const campaignIndex = argv.indexOf('--campaign');
   const script = argv[index];
   const target = argv[campaignIndex + 1];
-  return index >= 0 && script !== undefined && absolutePath(path.resolve(cwd, script)) === path.join(ROOT, 'tools/embctl.ts') &&
+  return index >= 0 && script !== undefined && absolutePath(path.resolve(cwd, script)) === path.join(ROOT, CAMPAIGN_CLI) &&
     argv[index + 1] === 'campaign' && argv[index + 2] === 'run' && campaignIndex > index && target !== undefined &&
     absolutePath(path.resolve(cwd, target)) === absolutePath(base);
 }

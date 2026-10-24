@@ -1,6 +1,6 @@
 # 관측 게이트
 
-코드: `tools/embedding/hardware.ts`의 `scan → parseManifest → selectPlatform → checkApplicability/assertCurrentCompatibility`.
+코드: `.agents/skills/terraforming-node/src/hardware.ts`의 `scan → parseManifest → selectPlatform → checkApplicability/assertCurrentCompatibility`.
 
 OS/커널/환경/CPU/메모리/디스크, PCI·벤더 도구, Docker 상태와 원문을 manifest에 담는다. 스캔 성공은 GPU 서빙 성공이 아니다. `absent`, `tool_missing`, `query_failed`, `unknown`을 구별한다.
 

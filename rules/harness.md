@@ -1,6 +1,19 @@
 # 결정론적 실행 계약
 
-호스트 제어는 `node tools/embctl.ts`의 TypeScript 게이트가 수행한다. 에이전트는 목표·근거·복구 가설을 제안하고, 코드는 승인·상태·소유권·입력·검증 증거를 판별한다. 생성 컨테이너의 TEI Rust와 sentence-transformers/PyTorch 및 API 서버 Python은 각 런타임의 기본 언어를 유지한다.
+호스트 제어는 네 스킬 팩 안의 TypeScript 구현과 전용 CLI가 수행한다. 에이전트는 목표·근거·복구 가설을 제안하고, 코드는 승인·상태·소유권·입력·검증 증거를 판별한다. 생성 컨테이너의 TEI Rust와 sentence-transformers/PyTorch 및 API 서버 Python은 각 런타임의 기본 언어를 유지한다.
+
+## 구현 소유권
+
+| 스킬 팩 | 실제 구현과 진입점 |
+|---|---|
+| terraforming-node | `src/hardware.ts`; `src/cli.ts init` |
+| embedding-upstream | `src/upstream.ts`, `recipes.ts`, `build.ts`; `src/cli.ts prepare/check/build` |
+| embedding-explorer | `src/models.ts`, `model-fingerprint.ts`, `attempts.ts`, `serving.ts`, `resources.ts`, `recovery.ts`, `campaign.ts`; `src/cli.ts inventory/inspect/approve/render/serve/capture/stop/campaign` |
+| embedding-lite-bench | `src/bench.ts`; `src/cli.ts bench/report` |
+
+공통 `.agents/harness/`는 직렬화·해시·파일 입출력·오류·프로세스/lease·CLI 인자 처리만 제공하며 스킬 구현을 import하지 않는다. `.agents/validation/`는 개발 검사·고정 모델 리뷰·실제 Luna 평가 도구다. 캠페인의 목표·승인·복구 상태는 explorer가 소유하고 각 위상의 실제 효과는 담당 스킬의 API에 위임한다. 스킬 팩은 이 저장소의 runtime/config와 공통 기반을 사용하는 협력 모듈이며 개별 폴더만 복사하는 독립 배포 단위는 아니다.
+
+기존 `tools/` 진입점은 제거했다. 과거 output의 스크립트·명령·해시는 당시 증거로 보존한다. 새 실행은 해당 스킬의 CLI와 새 attempt를 사용한다. 과거 attempt의 cleanup도 explorer의 `capture/stop --attempt`에서 원래 자산 ID·소유권을 확인하며, 과거 `run.sh`를 재실행하지 않는다.
 
 ## 상태와 안전불변식
 
@@ -19,13 +32,13 @@ flowchart LR
 
 | 불변식 | 코드 정본 | 차단·재개 방식 |
 |---|---|---|
-| 실제 사람의 장치 → 토큰 → 차원 선택 | `tools/embedding/models.ts` | 승인 원문 줄·해시·선택값, 모델 fingerprint, manifest snapshot 대조. 모델/범위 변경은 HITL, 무결성 오류는 복구 |
-| 환경 적용성 | `tools/embedding/hardware.ts` | 현재 호스트와 승인 당시의 구조·실행 환경·선택 장치 대조. 미관측/실패를 지원으로 추정하지 않음 |
-| 입력 고정 | `tools/embedding/upstream.ts`, `attempts.ts` | 공식 최신 안정 릴리스 commit, 이미지 digest, 실제 설치 URL·공식 인덱스·의존성 hash lock, recipe/runtime/정책/스킬을 attempt에 연결 |
-| 단일 실행 소유자 | `tools/embedding/processes.ts`, `campaign.ts` | host → campaign → attempt 실행 lease, boot/start/PID, checkpoint active phase 대조. 하위 실제 명령이 lease를 상속 |
-| 실패 후 유한 복구 | `tools/embedding/attempts.ts`, `recovery.ts`, `campaign.ts` | 실제 실패와 승인 범위·렌더 입력·남은 한도로 복구 후보 판별. 남은 같은 장치 ST 경로를 근거 없이 차단 처리하지 않음 |
-| 현재 증거의 PASS | `tools/embedding/bench.ts` | 같은 attempt의 기능검사·요청 회계·실측·사후 health와 컨테이너 정체성 검증. mock/과거 PASS는 새 PASS로 채택하지 않음 |
-| 평가 조건 보존 | `tools/campaign_e2e.ts` | 소스·정책·upstream과 그룹별 조건 고정, 실제 Codex 세션의 model/effort 및 도구 호출 증거 대조 |
+| 실제 사람의 장치 → 토큰 → 차원 선택 | `.agents/skills/embedding-explorer/src/models.ts` | 승인 원문 줄·해시·선택값, 모델 fingerprint, manifest snapshot 대조. 모델/범위 변경은 HITL, 무결성 오류는 복구 |
+| 환경 적용성 | `.agents/skills/terraforming-node/src/hardware.ts` | 현재 호스트와 승인 당시의 구조·실행 환경·선택 장치 대조. 미관측/실패를 지원으로 추정하지 않음 |
+| 입력 고정 | `.agents/skills/embedding-upstream/src/upstream.ts`, `embedding-upstream/src/recipes.ts`, `embedding-explorer/src/attempts.ts` | 공식 최신 안정 릴리스 commit, 이미지 digest, 실제 설치 URL·공식 인덱스·의존성 hash lock, recipe/runtime/정책/스킬을 attempt에 연결 |
+| 단일 실행 소유자 | `.agents/harness/processes.ts`, `campaign.ts` | host → campaign → attempt 실행 lease, boot/start/PID, checkpoint active phase 대조. 하위 실제 명령이 lease를 상속 |
+| 실패 후 유한 복구 | `.agents/skills/embedding-explorer/src/attempts.ts`, `recovery.ts`, `campaign.ts` | 실제 실패와 승인 범위·렌더 입력·남은 한도로 복구 후보 판별. 남은 같은 장치 ST 경로를 근거 없이 차단 처리하지 않음 |
+| 현재 증거의 PASS | `.agents/skills/embedding-lite-bench/src/bench.ts` | 같은 attempt의 기능검사·요청 회계·실측·사후 health와 컨테이너 정체성 검증. mock/과거 PASS는 새 PASS로 채택하지 않음 |
+| 평가 조건 보존 | `.agents/validation/campaign_e2e.ts` | 소스·정책·upstream과 그룹별 조건 고정, 실제 Codex 세션의 model/effort 및 도구 호출 증거 대조 |
 
 서빙 HITL은 실행 권한 승인과 별개다. `approve`에 임의의 문자열을 넣거나 도구 출력·에이전트 문장을 사람의 답으로 바꾸지 않는다. 새 승인은 실제 Codex session 저장소의 session ID·파일명·사용자 원문 줄을 검사한다. 기존 실제 영수증은 `config/legacy-approvals.json`에 고정한 원래 43개의 ID·digest·승인 원문 해시와 범위를 대조한다. 새로 만든 schema-1 파일을 과거 승인으로 받아들이지 않는다. 파일 해시는 보존 무결성을 확인하며 동일 사용자에 의한 의도적 파일 위조까지 인증하는 보안 장치는 아니다.
 
@@ -47,6 +60,6 @@ stop/capture는 복구 중 소스나 모델 파일이 바뀌었어도 원래 승
 
 ## 개발과 평가
 
-네 스킬은 이 계약과 코드 진입점을 안내한다. 모델이 설명을 생략하더라도 진입점의 필수 게이트는 수행된다. 동일 사용자 권한의 임의 Docker/파일 명령 자체를 격리하는 운영체제 보안 정책은 아니다. 해당 우회 실행은 하네스 증거로 인정하지 않는다.
+각 스킬 팩은 `SKILL.md`의 판단 지침과 `src/`의 실제 결정론적 구현을 함께 소유한다. 모델이 설명을 생략하더라도 진입점의 필수 게이트는 수행된다. 동일 사용자 권한의 임의 Docker/파일 명령 자체를 격리하는 운영체제 보안 정책은 아니다. 해당 우회 실행은 하네스 증거로 인정하지 않는다.
 
-소스 변경은 상위 모델로 구현·검토하고 `node tools/verify.ts`로 검증한다. 최종 Luna none 평가는 소스와 입력을 고정한 뒤 별도 evaluation에서 실행한다. 평가 중 소스 수정이나 상위 모델의 문제 해결 개입이 필요하면 그 평가의 실패 증거를 보존하고 개발로 돌아온다. 수정 후 새 evaluation 전체를 수행하며 이전 일부 PASS를 섞지 않는다.
+소스 변경은 상위 모델로 구현·검토하고 `node .agents/validation/verify.ts`로 검증한다. 최종 Luna none 평가는 소스와 입력을 고정한 뒤 별도 evaluation에서 실행한다. 평가 중 소스 수정이나 상위 모델의 문제 해결 개입이 필요하면 그 평가의 실패 증거를 보존하고 개발로 돌아온다. 수정 후 새 evaluation 전체를 수행하며 이전 일부 PASS를 섞지 않는다.

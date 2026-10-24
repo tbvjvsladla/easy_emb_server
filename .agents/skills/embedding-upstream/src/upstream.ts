@@ -2,10 +2,10 @@
 import {createHash} from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import {ROOT, GateError, arrayValue, asRecord, cloneJson, digest, loadRecord, now, omitRecordKeys, save, stringValue} from './common.ts';
-import type {JsonObject} from './common.ts';
-import {selectPlatform} from './hardware.ts';
-import {runCommand, withExecutionLease} from './processes.ts';
+import {ROOT, GateError, arrayValue, asRecord, cloneJson, digest, loadRecord, now, omitRecordKeys, save, stringValue} from '../../../harness/common.ts';
+import type {JsonObject} from '../../../harness/common.ts';
+import {selectPlatform} from '../../terraforming-node/src/hardware.ts';
+import {runCommand, withExecutionLease} from '../../../harness/processes.ts';
 
 const RELEASES = [
   {key: 'tei', repository: 'huggingface/text-embeddings-inference'},

@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /** Fixed highest-model source review. Command/configuration overrides are rejected. */
 import {join} from 'node:path';
-import {ROOT, now, save} from './embedding/common.ts';
-import {runCommand} from './embedding/processes.ts';
+import {ROOT, now, save} from '../harness/common.ts';
+import {runCommand} from '../harness/processes.ts';
 
 if (process.argv.length !== 2) throw new Error('The fixed review entrypoint accepts no arguments.');
 const output = join(ROOT, 'output/validation/review', now().replaceAll(':', '').replaceAll('.', '-'));

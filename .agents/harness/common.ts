@@ -1,7 +1,7 @@
 /** Durable documents and exact compatibility with the original Python receipts. */
 import {createHash, randomUUID} from 'node:crypto';
-import {closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync} from 'node:fs';
-import {dirname, extname, join, resolve} from 'node:path';
+import {closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync} from 'node:fs';
+import {dirname, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {parseDocument} from 'yaml';
 
@@ -127,7 +127,8 @@ function tokenFor(parent: object | undefined, key: string, value: unknown): stri
   return entry && Object.is(entry.value, value) ? entry.token : undefined;
 }
 
-function compareCodePoints(left: string, right: string): number {
+/** Orders strings by Unicode code points for cross-language canonical records. */
+export function compareCodePoints(left: string, right: string): number {
   const a = Array.from(left);
   const b = Array.from(right);
   for (let i = 0; i < Math.min(a.length, b.length); i++) {
@@ -234,33 +235,6 @@ export function appendEvent(path: string, record: JsonObject): void {
   mkdirSync(dirname(path), {recursive: true});
   const fd = openSync(path, 'a', 0o600);
   try { writeFileSync(fd, `${JSON.stringify(serializable(record))}\n`); fsyncSync(fd); } finally { closeSync(fd); }
-}
-
-/** Model identity hashes metadata content and observes weight sizes/mtimes, not all weight bytes. */
-export interface ModelFingerprint { method: string; digest: string; }
-
-/** Matches Python Path ordering and exact nanosecond timestamps without rounding through Number. */
-export function fingerprintModel(model: string): ModelFingerprint {
-  const root = realpathSync(model);
-  const records: JsonObject[] = [];
-  function visit(directory: string): void {
-    for (const name of readdirSync(directory).toSorted(compareCodePoints)) {
-      const path = join(directory, name);
-      const entry = lstatSync(path);
-      if (entry.isDirectory()) { visit(path); continue; }
-      const extension = extname(name);
-      if (!['.json', '.py', '.safetensors', '.bin'].includes(extension)) continue;
-      const stats = statSync(path, {bigint: true});
-      if (!stats.isFile()) continue;
-      const row: JsonObject = {path: path.slice(root.length + 1), size: stats.size, mtime_ns: stats.mtimeNs};
-      if (extension === '.json' || extension === '.py') row.sha256 = sha256Bytes(readFileSync(path));
-      const after = statSync(path, {bigint: true});
-      if (stats.mtimeNs !== after.mtimeNs || stats.size !== after.size) throw new GateError('MODEL_CHANGED_DURING_SCAN', `Model changed while reading ${path}.`);
-      records.push(row);
-    }
-  }
-  visit(root);
-  return {method: 'metadata-sha256+weight-size-mtime', digest: digest(records)};
 }
 
 /** Canonicalizes existing paths while permitting a not-yet-created final artifact. */
