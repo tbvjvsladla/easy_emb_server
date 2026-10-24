@@ -7,6 +7,8 @@ status: published
 
 # TypeScript 하네스와 Luna none E2E 결과
 
+> **SUPERSEDED-IN-PART — 2026-10-24:** 이 문서는 중앙 TypeScript 구현의 r4 실측을 보존한다. 실제 코드를 네 스킬 폴더로 이관하고 `tools/`를 제거한 후속 작업과 선정 3종 재검증은 [역할별 스킬 팩 보고서](skill-pack-luna-e2e.md)를 따른다. 아래 과거 코드 링크는 당시 검증 커밋에 고정했다.
+
 **네 작업 스킬의 호스트 제어를 TypeScript로 이식하고, 고정된 최종본을 실제 Codex `gpt-6-luna`·reasoning `none`으로 검증했다. 전체 18종 × CPU/GPU 36조건은 34 PASS, 기존 `nomic-xlm-2048` 두 조건은 현재 근거를 갖춘 BLOCKED다.** 대표 6조건과 실제 호출 중단·재개 3조건도 각각 새 시도로 통과했다. 최종 driver는 모델 수용 기준·실제 실행 모델·독립성·소스 불변성 검사를 모두 통과했다.
 
 평가 ID는 `harness-luna-261023-r4`, 소스 커밋은 `d4e818980f117c42cff4a38886c7710ee2458e72`다. 고정은 2026-10-24 07:01:11 KST, 전체 36조건 실행은 07:10:26~09:01:15 KST에 수행했다. 이전 평가의 부분 성공을 이번 성공으로 합산하지 않았다. [전체 driver 결과](../../output/evaluations/harness-luna-261023-r4/groups/full36/1792793426330-fc2c5099/result.json)
@@ -17,12 +19,12 @@ status: published
 
 | 스킬 | 코드가 담당하는 결정과 게이트 |
 |---|---|
-| [terraforming-node](../../.agents/skills/terraforming-node/SKILL.md) | [hardware.ts](../../tools/embedding/hardware.ts): HW를 관측해 manifest를 만들고, 미관측·조회 실패·실질 환경 변경과 실행 적용성을 판별한다. |
-| [embedding-upstream](../../.agents/skills/embedding-upstream/SKILL.md) | [upstream.ts](../../tools/embedding/upstream.ts), [attempts.ts](../../tools/embedding/attempts.ts): 공식 안정 릴리스·이미지·의존성을 고정하고 승인된 입력으로 Dockerfile과 시도를 생성·빌드한다. |
-| [embedding-explorer](../../.agents/skills/embedding-explorer/SKILL.md) | [models.ts](../../tools/embedding/models.ts), `attempts.ts`: 모델과 실제 사용자 승인 출처를 검증하고 장치·토큰·차원을 보존하며 기동·복구·소유 자산 정리를 수행한다. |
-| [embedding-lite-bench](../../.agents/skills/embedding-lite-bench/SKILL.md) | [bench.ts](../../tools/embedding/bench.ts): 현재 시도의 API 기능·요청 회계·장치·입력 경계·사후 health와 측정 원문을 대조해 결과를 판정한다. |
+| [terraforming-node](../../.agents/skills/terraforming-node/SKILL.md) | [hardware.ts](https://github.com/tbvjvsladla/easy_emb_server/blob/d4e818980f117c42cff4a38886c7710ee2458e72/tools/embedding/hardware.ts): HW를 관측해 manifest를 만들고, 미관측·조회 실패·실질 환경 변경과 실행 적용성을 판별한다. |
+| [embedding-upstream](../../.agents/skills/embedding-upstream/SKILL.md) | [upstream.ts](https://github.com/tbvjvsladla/easy_emb_server/blob/d4e818980f117c42cff4a38886c7710ee2458e72/tools/embedding/upstream.ts), [attempts.ts](https://github.com/tbvjvsladla/easy_emb_server/blob/d4e818980f117c42cff4a38886c7710ee2458e72/tools/embedding/attempts.ts): 공식 안정 릴리스·이미지·의존성을 고정하고 승인된 입력으로 Dockerfile과 시도를 생성·빌드한다. |
+| [embedding-explorer](../../.agents/skills/embedding-explorer/SKILL.md) | [models.ts](https://github.com/tbvjvsladla/easy_emb_server/blob/d4e818980f117c42cff4a38886c7710ee2458e72/tools/embedding/models.ts), `attempts.ts`: 모델과 실제 사용자 승인 출처를 검증하고 장치·토큰·차원을 보존하며 기동·복구·소유 자산 정리를 수행한다. |
+| [embedding-lite-bench](../../.agents/skills/embedding-lite-bench/SKILL.md) | [bench.ts](https://github.com/tbvjvsladla/easy_emb_server/blob/d4e818980f117c42cff4a38886c7710ee2458e72/tools/embedding/bench.ts): 현재 시도의 API 기능·요청 회계·장치·입력 경계·사후 health와 측정 원문을 대조해 결과를 판정한다. |
 
-초기화의 HW 관측 이후, 런타임의 세 스킬은 공통 [캠페인](../../tools/embedding/campaign.ts)과 [복구](../../tools/embedding/recovery.ts) 코드를 사용한다. checkpoint가 승인·현재 시도·소유권·미결 사항·다음 작업을 보존한다.
+초기화의 HW 관측 이후, 런타임의 세 스킬은 공통 [캠페인](https://github.com/tbvjvsladla/easy_emb_server/blob/d4e818980f117c42cff4a38886c7710ee2458e72/tools/embedding/campaign.ts)과 [복구](https://github.com/tbvjvsladla/easy_emb_server/blob/d4e818980f117c42cff4a38886c7710ee2458e72/tools/embedding/recovery.ts) 코드를 사용한다. checkpoint가 승인·현재 시도·소유권·미결 사항·다음 작업을 보존한다.
 
 ```mermaid
 flowchart LR

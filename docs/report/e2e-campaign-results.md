@@ -142,8 +142,16 @@ PPLX context에서 일반 `/v1/embeddings`의 각 문자열은 독립 1청크 �
 
 재개에는 검토·검증한 문장 임베딩 파이프라인과 갱신된 실제 전략 영수증이 필요하다. 실험 pooling은 명시 승인을 받은 새 셀로 분리한다. 단순 평균 풀링을 임의로 추가해 모델 기본값 PASS를 만들지 않는다. 기존 완료 PASS 셀은 재실행할 필요가 없으며 checkpoint를 직접 편집하지 않는다.
 
+다음은 당시 Python 하네스의 역사적 명령이다.
+
 ```bash
 python3 tools/embctl.py campaign status --campaign output/campaigns/nas-all-defaults-261022
+```
+
+현재 캠페인의 상태 조회는 아래 스킬 진입점을 사용한다. 스킬 팩 이관과 새 선별 검증은 [후속 보고서](skill-pack-luna-e2e.md)에 기록한다.
+
+```bash
+node .agents/skills/embedding-explorer/src/cli.ts campaign status --campaign output/campaigns/<id>
 ```
 
 최종 정리 관측(2026-10-23 08:12:54 KST)에서 프로젝트 라벨의 실행·종료 컨테이너는 모두 0개였다. NAS 모델, 이미지·빌드 캐시, 실제 생성물·실패·측정 원문은 보존했다. 작업 인계에는 활성 worker와 미응답 HITL이 없고 두 BLOCKED의 후속 조건만 남았다.
