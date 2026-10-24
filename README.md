@@ -27,6 +27,8 @@ Codex에 모델 위치와 원하는 작업을 알려주세요.
 
 네 역할은 각 스킬 팩의 `SKILL.md`와 `src/` 구현으로 구성됩니다. 역할별 CLI가 TypeScript 게이트를 실행하며 JSON과 YAML을 읽습니다. 구현 소유권과 공통 기반은 [게이트 계약](rules/harness.md#구현-소유권)에 정리했습니다. [결정론적 게이트](rules/harness.md)가 승인·입력·실행 소유권·측정 증거를 검사합니다. TEI Rust와 sentence-transformers/PyTorch·API Python은 생성 컨테이너 안에서 각 기본 언어를 유지합니다.
 
+스킬별로 에이전트의 판단과 결정론적 코드가 맡는 책임, 서로 협력하는 방식은 [스킬 팩 README](.agents/skills/README.md)에 정리했습니다. 스킬의 역할을 이해하거나 확장할 때 참고하세요.
+
 ## 한 모델의 서빙 흐름
 
 먼저 하드웨어를 관측하고 모델 메타데이터를 조사합니다. `inventory`와 `inspect`는 가중치를 로드하지 않습니다.
